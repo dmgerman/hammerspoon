@@ -100,6 +100,47 @@ local apps = {} -- all GUI apps (class App) containing all windows (class Window
 local App,Window={},{} -- classes
 local preexistingWindowFocused,preexistingWindowCreated={},{} -- used to 'bootstrap' fields .focused/.created and preserve relative ordering in :getWindows
 
+--- hs.window.filter.bundleIDignoreAlways
+--- Variable
+--- A table of application bundleIDs that are always ignored by this module.
+--- These are apps with no windows or any visible GUI, such as system services, background daemons and "helper" apps.
+---
+--- You can add an app to this table with `hs.window.filter.bundleIDignoreAlways['bundleIDofAP'] = true`
+---
+--- Notes:
+---  * As the name implies, even the empty, "allow all" windowfilter will ignore these apps.
+---  * You don't *need* to keep this table up to date, since non GUI apps will simply never show up anywhere;
+---    this table is just used as a "root" filter to gain a performance improvement.
+
+windowfilter.bundleIDignoreAlways = {}
+do
+  local SKIP_BUNDLES = {
+    "com.apple.AirPlayUIAgent",
+    "com.apple.CoreLocationAgent",
+    "com.apple.Spotlight",
+    "com.apple.UserNotificationCenter",
+    "com.apple.WebKit.GPU",
+    "com.apple.WebKit.Networking",
+    "com.apple.WebKit.WebContent",
+    "com.apple.accessibility.AXVisualSupportAgent",
+    "com.apple.audio.AudioMIDISetup",
+    "com.apple.controlcenter",
+    "com.apple.dock",
+    "com.apple.dock.extra",
+    "com.apple.loginwindow",
+    "com.apple.notificationcenterui",
+    "com.apple.talagent",
+    "com.apple.universalcontrol",
+    "com.apple.wifi.WiFiAgent",
+    "com.google.Chrome.helper.plugin",
+    "com.apple.wallpaper.agent",
+    "com.apple.accessibility.universalAccessAuthWarn",
+    "com.apple.TextInputMenuAgent",
+--    "com.bambulab.bambu-studio",
+  }
+  for _,bundle in ipairs(SKIP_BUNDLES) do windowfilter.bundleIDignoreAlways[bundle] = true end
+end
+
 --- hs.window.filter.ignoreAlways
 --- Variable
 --- A table of application names (as per `hs.application:name()`) that are always ignored by this module.
@@ -790,6 +831,24 @@ windowfilter.isGuiApp = function(appname)
     --  elseif appname=='Hammerspoon' then return false
   else return true end
 end
+
+--- hs.window.filter.isGuiByBundleID(bundleID) -> boolean
+--- Function
+--- Checks whether an app is a known non-GUI BundleID, as per `hs.window.filter.ignoreAlways`
+---
+--- Parameters:
+---  * bundleID - bundle ID of the app to check as per `hs.application:bundleID()`
+---
+--- Returns:
+---  * `false` if the app is a known non-GUI (or not accessible) app; `true` otherwise
+windowfilter.isGuiByBundleID = function(bundleID)
+  if bundleID and windowfilter.bundleIDignoreAlways[bundleID] then
+    -- if in the table, ignore it
+    return not windowfilter.bundleIDignoreAlways[bundleID]
+  end
+  return true
+end
+
 
 
 -- event watcher (formerly windowwatcher)
