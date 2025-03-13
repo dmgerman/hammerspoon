@@ -239,35 +239,39 @@ local shortRoles={AXStandardWindow='wnd',AXDialog='dlg',AXSystemDialog='sys dlg'
   AXNotificationCenterBanner='notif',AXUnknown='unknown',['']='no role'}
 
 local function isWindowAllowed(self,win)
-  local role,appname,id=shortRoles[win.role] or win.role,win.app.name,win.id
+  local role,appname,id,bundleID=shortRoles[win.role] or win.role,win.app.name,win.id,win.bundleID
   local filter=self.filters.override
   if filter==false then self.log.vf('REJECT %s (%s %d): override filter reject',appname,role,id) return false
   elseif filter then
     local r,cause=checkWindowAllowed(filter,win)
     if not r then
-      self.log.vf('REJECT %s (%s %d): override filter [%s]',appname,role,id,cause)
+      self.log.vf('REJECT %s [%s] (%s %d): override filter [%s]',appname,bundleID,role,id,cause)
       return r
     end
   end
   if not windowfilter.isGuiApp(appname) then
     --if you see this in the log, add to .ignoreAlways
-    self.log.wf('REJECT %s (%s %d): should be a non-GUI app!',appname,role,id) return false
+    self.log.wf('REJECT %s [%s] (%s %d ): should be a non-GUI app!',appname,bundleID,role,id) return false
+  end
+  if not windowfilter.isGuiByBundleID(bundleID) then
+    --if you see this in the log, add to .ignoreAlways
+    self.log.wf('REJECT %s [%s] (%s %d ): should be a non-GUI bundleID!',appname,bundleID,role,id) return false
   end
   filter=self.filters[appname]
-  if filter==false then self.log.vf('REJECT %s (%s %d): app filter reject',appname,role,id) return false
+  if filter==false then self.log.vf('REJECT %s [%s] (%s %d): app filter reject',appname,bundleID,role,id) return false
   elseif filter then
     local r,cause=checkWindowAllowed(filter,win)
-    self.log.vf('%s %s (%s %d): app filter [%s]',r and 'ALLOW' or 'REJECT',appname,role,id,cause)
+    self.log.vf('%s %s [%s] (%s %d): app filter [%s]',r and 'ALLOW' or 'REJECT',appname,bundleID,role,id,cause)
     return r
   end
   filter=self.filters.default
-  if filter==false then self.log.vf('REJECT %s (%s %d): default filter reject',appname,role,id) return false
+  if filter==false then self.log.vf('REJECT %s (%s [%s] %d): default filter reject',appname,bundleID,role,id) return false
   elseif filter then
     local r,cause=checkWindowAllowed(filter,win)
-    self.log.vf('%s %s (%s %d): default filter [%s]',r and 'ALLOW' or 'REJECT',appname,role,id,cause)
+    self.log.vf('%s %s [%s] (%s %d): default filter [%s]',r and 'ALLOW' or 'REJECT',appname,bundleID,role,id,cause)
     return r
   end
-  self.log.vf('ALLOW %s (%s %d) (no filter)',appname,role,id)
+  self.log.vf('ALLOW %s [%s] (%s %d) (no filter)',appname,bundleID,role,id)
   return true
 end
 
@@ -289,6 +293,7 @@ function WF:isWindowAllowed(theWindow)
     self.log.d('window is not being tracked')
     win=Window.new(theWindow,id) --fixme
     win.app={} win.app.name=theWindow:application():name()
+    win.app.bundleID=theWindow:application():bundleID()
     if self.trackSpacesFilters then
       win.isInCurrentSpace=false
       if not win.isVisible then win.isInCurrentSpace=true
@@ -1216,8 +1221,9 @@ function App:getFocused()
   end
 end
 
-function App.new(app,appname,pid,watcher)
-  local o = setmetatable({app=app,name=appname,pid=pid,watcher=watcher,windows={}},{__index=App})
+function App.new(app,appname,pid,watcher,bundleID)
+  local o = setmetatable({app=app,name=appname,pid=pid,watcher=watcher,
+      bundleID=bundleID,windows={}},{__index=App})
   if app:isHidden() then o.isHidden=true end
   -- TODO if a way is found to fecth *all* windows across spaces, add it here
   -- and remove .switchedToSpace, .forceRefreshOnSpaceChange
@@ -1425,7 +1431,7 @@ local function startAppWatcher(app,appname,retry,nologging,force)
     pendingApps[pid]=nil --done
     local watcher = app:newWatcher(appWindowEvent,pid)
     watcher:start({uiwatcher.windowCreated,uiwatcher.focusedWindowChanged})
-    App.new(app,appname,pid,watcher)
+    App.new(app,appname,pid,watcher,bundleID)
   else
     -- apps that start with an open window will often fail to be detected by the watcher if we
     -- start it too early, so we try `app:focusedWindow()` MAX_RETRIES times before giving up
