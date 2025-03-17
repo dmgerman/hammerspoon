@@ -1491,8 +1491,18 @@ end
 local function startAppWatcher(app,appname,retry,nologging,force)
   if not app or not appname then log.e('called startAppWatcher with no app') return end
   local pid = app:pid()
+  local bundleID = app:bundleID()
   if apps[pid] then return not nologging and log.df('app %s already registered',appname) end
-  if app:kind()<0 or not windowfilter.isGuiApp(appname) then log.df('app %s has no GUI',appname) return end
+  -- check for bundle before calling app:kind()
+  -- because doing so will time out
+  if not windowfilter.isGuiByBundleID(bundleID) then
+    log.df("App's bundleID  %s [%s] is not expected to have a GUI",appname, bundleID)
+    return
+  end
+  if app:kind()<0 or (not windowfilter.isGuiApp(appname)) then
+    log.df('app %s [%s] has no GUI',appname, bundleID)
+    return
+  end
   if not fnutils.contains(axuielement.applicationElement(app):attributeNames() or {}, "AXFocusedWindow") then
       log.df('app %s has no AXFocusedWindow element',appname)
       return
