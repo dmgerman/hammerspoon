@@ -205,16 +205,29 @@ end
 function windowfilter._showCandidates()
   local running=application.runningApplications()
   local t={}
+  local bundles = {}
   for _,app in ipairs(running) do
     local appname = app:name()
+    local bundleid = app:bundleID()
     local pid = app:pid()
-    if appname and windowfilter.isGuiApp(appname) and #app:allWindows()==0
+    if appname and windowfilter.isGuiApp(appname) and windowfilter.isGuiByBundleID(bundleid) and #app:allWindows()==0
       and not windowfilter.ignoreInDefaultFilter[appname] and app:kind()>=0
       and (not apps[pid] or not next(apps[pid].windows)) then
-      t[#t+1]=appname
+      
+      t[appname]=bundleid
+
+      if not bundles[bundleid] then
+        bundles[bundleid] = appname
+      else
+        bundles[bundleid] = bundles[bundleid] .. " " .. appname
+      end
+
     end
   end
+  print("Apps")
   print(require'hs.inspect'(t))
+  print("Bundles")
+  print(hs.inspect(bundles))
 end
 
 
