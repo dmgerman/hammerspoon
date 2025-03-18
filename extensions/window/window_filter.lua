@@ -293,7 +293,7 @@ local shortRoles={AXStandardWindow='wnd',AXDialog='dlg',AXSystemDialog='sys dlg'
   AXNotificationCenterBanner='notif',AXUnknown='unknown',['']='no role'}
 
 local function isWindowAllowed(self,win)
-  local role,appname,id,bundleID=shortRoles[win.role] or win.role,win.app.name,win.id,win.bundleID
+  local role,appname,id,bundleID=shortRoles[win.role] or win.role,win.app.name,win.id,win.app.bundleID
   local filter=self.filters.override
   if filter==false then self.log.vf('REJECT %s (%s %d): override filter reject',appname,role,id) return false
   elseif filter then
