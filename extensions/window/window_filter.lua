@@ -769,6 +769,16 @@ end
 --- Notes:
 ---  * This windowfilter will inherit customizations to the default windowfilter if they're performed *before* referencing this
 
+--- hs.window.filter.ignoreWindowsPattern
+--- Variable
+--- A Lua pattern to match app names that should be ignored by the window filter.
+---
+--- Notes:
+---  * Default is `'Web Content$'` which matches WebKit helper processes that are slow to respond to accessibility queries
+---  * Set to `nil` or empty string `''` to disable pattern-based filtering
+---  * Uses Lua pattern matching (e.g., `'Web Content$'` matches any app name ending with "Web Content")
+windowfilter.ignoreWindowsPattern = 'Web Content$'
+
 --- hs.window.filter.isGuiApp(appname) -> boolean
 --- Function
 --- Checks whether an app is a known non-GUI app, as per `hs.window.filter.ignoreAlways`
@@ -782,6 +792,8 @@ windowfilter.isGuiApp = function(appname)
   if not appname then return true
   elseif windowfilter.ignoreAlways[appname] then return false
   elseif ssub(appname,1,12)=='QTKitServer-' then return false
+  elseif windowfilter.ignoreWindowsPattern and windowfilter.ignoreWindowsPattern ~= ''
+         and smatch(appname, windowfilter.ignoreWindowsPattern) then return false
     --  elseif appname=='Hammerspoon' then return false
   else return true end
 end
@@ -1251,7 +1263,18 @@ function App:getCurrentSpaceAppWindows(inserted)
       end
     end
   end
+  -- Profile allWindows call
+  local t1 = timer.absoluteTime()
   local allWindows=self.app:allWindows()
+  local t2 = timer.absoluteTime()
+  local awTime = (t2 - t1) / 1e9
+  if awTime > 0.1 then
+    log.wf('[SLOW APP] %s: allWindows took %.2fs', self.name, awTime)
+    if log.getLogLevel() >= 5 then -- verbose level
+      local f = io.open('/tmp/slow_apps.log', 'a')
+      if f then f:write(sformat('[SLOW] %s: allWindows %.2fs\n', self.name, awTime)) f:close() end
+    end
+  end
   --[[ no need, desktop is filtered in hs.window now
   if self.name=='Finder' then --filter out the desktop here
     for i=#allWindows,1,-1 do if allWindows[i]:role()~='AXWindow' then tremove(allWindows,i) break end end
@@ -1422,13 +1445,40 @@ local function startAppWatcher(app,appname,retry,nologging,force)
   local pid = app:pid()
   if apps[pid] then return not nologging and log.df('app %s already registered',appname) end
   if app:kind()<0 or not windowfilter.isGuiApp(appname) then log.df('app %s has no GUI',appname) return end
-  if not fnutils.contains(axuielement.applicationElement(app):attributeNames() or {}, "AXFocusedWindow") then
+
+  -- Profile attributeNames call
+  local t1 = timer.absoluteTime()
+  local axAttrs = axuielement.applicationElement(app):attributeNames() or {}
+  local t2 = timer.absoluteTime()
+  local attrTime = (t2 - t1) / 1e9
+  if attrTime > 0.1 then
+    log.wf('[SLOW APP] %s: attributeNames took %.2fs', appname, attrTime)
+    if log.getLogLevel() >= 5 then -- verbose level
+      local f = io.open('/tmp/slow_apps.log', 'a')
+      if f then f:write(sformat('[SLOW] %s: attributeNames %.2fs\n', appname, attrTime)) f:close() end
+    end
+  end
+
+  if not fnutils.contains(axAttrs, "AXFocusedWindow") then
       log.df('app %s has no AXFocusedWindow element',appname)
       return
   end
   retry=(retry or 0)+1
 
-  if app:focusedWindow() or force then
+  -- Profile focusedWindow call
+  t1 = timer.absoluteTime()
+  local fw = app:focusedWindow()
+  t2 = timer.absoluteTime()
+  local fwTime = (t2 - t1) / 1e9
+  if fwTime > 0.1 then
+    log.wf('[SLOW APP] %s: focusedWindow took %.2fs', appname, fwTime)
+    if log.getLogLevel() >= 5 then -- verbose level
+      local f = io.open('/tmp/slow_apps.log', 'a')
+      if f then f:write(sformat('[SLOW] %s: focusedWindow %.2fs\n', appname, fwTime)) f:close() end
+    end
+  end
+
+  if fw or force then
     pendingApps[pid]=nil --done
     local watcher = app:newWatcher(appWindowEvent,pid)
     watcher:start({uiwatcher.windowCreated,uiwatcher.focusedWindowChanged})
