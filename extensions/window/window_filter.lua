@@ -779,6 +779,15 @@ end
 ---  * Uses Lua pattern matching (e.g., `'Web Content$'` matches any app name ending with "Web Content")
 windowfilter.ignoreWindowsPattern = 'Web Content$'
 
+--- hs.window.filter.slowAppLogFile
+--- Variable
+--- Path to the log file for slow app profiling.
+---
+--- Notes:
+---  * Default is `hs.configdir .. '/slow_apps.log'`
+---  * Set to `nil` or empty string `''` to disable file logging
+windowfilter.slowAppLogFile = hs.configdir .. '/slow_apps.log'
+
 --- hs.window.filter.isGuiApp(appname) -> boolean
 --- Function
 --- Checks whether an app is a known non-GUI app, as per `hs.window.filter.ignoreAlways`
@@ -798,6 +807,18 @@ windowfilter.isGuiApp = function(appname)
   else return true end
 end
 
+-- Private helper function to log slow app performance
+local function logSlowApp(app, appname, method, elapsed)
+  local bundleID = app:bundleID() or 'unknown'
+  log.wf('[SLOW APP] %s (%s): %s took %.2fs', appname, bundleID, method, elapsed)
+  if windowfilter.slowAppLogFile and windowfilter.slowAppLogFile ~= '' then
+    local f = io.open(windowfilter.slowAppLogFile, 'a')
+    if f then
+      f:write(sformat('[SLOW] %s (%s): %s %.2fs\n', appname, bundleID, method, elapsed))
+      f:close()
+    end
+  end
+end
 
 -- event watcher (formerly windowwatcher)
 local nullEvent='null event'
@@ -1269,11 +1290,7 @@ function App:getCurrentSpaceAppWindows(inserted)
   local t2 = timer.absoluteTime()
   local awTime = (t2 - t1) / 1e9
   if awTime > 0.1 then
-    log.wf('[SLOW APP] %s: allWindows took %.2fs', self.name, awTime)
-    if log.getLogLevel() >= 5 then -- verbose level
-      local f = io.open('/tmp/slow_apps.log', 'a')
-      if f then f:write(sformat('[SLOW] %s: allWindows %.2fs\n', self.name, awTime)) f:close() end
-    end
+    logSlowApp(self.app, self.name, 'allWindows', awTime)
   end
   --[[ no need, desktop is filtered in hs.window now
   if self.name=='Finder' then --filter out the desktop here
@@ -1452,11 +1469,7 @@ local function startAppWatcher(app,appname,retry,nologging,force)
   local t2 = timer.absoluteTime()
   local attrTime = (t2 - t1) / 1e9
   if attrTime > 0.1 then
-    log.wf('[SLOW APP] %s: attributeNames took %.2fs', appname, attrTime)
-    if log.getLogLevel() >= 5 then -- verbose level
-      local f = io.open('/tmp/slow_apps.log', 'a')
-      if f then f:write(sformat('[SLOW] %s: attributeNames %.2fs\n', appname, attrTime)) f:close() end
-    end
+    logSlowApp(app, appname, 'attributeNames', attrTime)
   end
 
   if not fnutils.contains(axAttrs, "AXFocusedWindow") then
@@ -1471,11 +1484,7 @@ local function startAppWatcher(app,appname,retry,nologging,force)
   t2 = timer.absoluteTime()
   local fwTime = (t2 - t1) / 1e9
   if fwTime > 0.1 then
-    log.wf('[SLOW APP] %s: focusedWindow took %.2fs', appname, fwTime)
-    if log.getLogLevel() >= 5 then -- verbose level
-      local f = io.open('/tmp/slow_apps.log', 'a')
-      if f then f:write(sformat('[SLOW] %s: focusedWindow %.2fs\n', appname, fwTime)) f:close() end
-    end
+    logSlowApp(app, appname, 'focusedWindow', fwTime)
   end
 
   if fw or force then
