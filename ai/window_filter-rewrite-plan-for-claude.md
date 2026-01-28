@@ -434,11 +434,15 @@ end
 -- ============================================================================
 -- KNOWN BUG TESTS (these document bugs in current implementation)
 -- ============================================================================
+-- NOTE: The testRejectRegionsBug test is SKIPPED in Step 0 contract tests.
+-- It will be added in Step 10 when verifying the fix in the new implementation.
+-- See Section 7 of window_filter-rewrite-plan.md for bug details.
+-- ============================================================================
 
+--[[ SKIPPED FOR STEP 0 - Add this test in Step 10:
 -- This test documents the rejectRegions bug in the current implementation.
 -- The current code incorrectly uses filter.allowRegions instead of filter.rejectRegions.
 -- This test will FAIL against the buggy current implementation but PASS against the fixed rewrite.
--- When running against current implementation, this test should be SKIPPED or marked as EXPECTED FAIL.
 function testRejectRegionsBug()
   -- This test requires a visible window, so ensure one exists
   hs.openConsole()
@@ -472,6 +476,7 @@ function testRejectRegionsBug()
   f:delete()
   return success()
 end
+--]]
 ```
 
 **How to run:**
