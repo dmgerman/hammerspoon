@@ -126,10 +126,165 @@ windowfilter._safeCall = safeCall
 windowfilter._safeGetScreenId = safeGetScreenId
 
 ----------------------------------------------------------------------
--- SECTION 5: PLACEHOLDER FOR FUTURE COMPONENTS
+-- SECTION 5: DATA STRUCTURES
+----------------------------------------------------------------------
+
+----------------------------------------------------------------------
+-- WindowInfo: Snapshot of window state
+----------------------------------------------------------------------
+-- Captures window properties at a point in time with safe extraction.
+-- Mutable properties can be updated via refresh().
+-- appName/appPid are set by Tracker after construction.
+
+local WindowInfo = {}
+WindowInfo.__index = WindowInfo
+
+--- Create a new WindowInfo from an hs.window object.
+--- @param hsWindow userdata The hs.window object
+--- @return table|nil WindowInfo object, or nil if hsWindow is invalid
+function WindowInfo.new(hsWindow)
+  if not hsWindow then return nil end
+
+  local self = setmetatable({}, WindowInfo)
+
+  -- Immutable properties (set once at creation)
+  self.id = safeCall(hsWindow.id, hsWindow) or 0
+  self.timeCreated = hs.timer.absoluteTime()
+
+  -- Mutable properties (can change, updated via refresh)
+  self.title = safeCall(hsWindow.title, hsWindow) or ''
+  self.role = safeCall(hsWindow.subrole, hsWindow) or ''
+  self.frame = safeCall(hsWindow.frame, hsWindow)
+  self.screenId = safeGetScreenId(hsWindow)
+  self.isMinimized = safeCall(hsWindow.isMinimized, hsWindow) or false
+  self.isVisible = safeCall(hsWindow.isVisible, hsWindow) or false
+  self.isFullscreen = safeCall(hsWindow.isFullScreen, hsWindow) or false
+
+  -- hasTitlebar: true if window has a zoom button (standard window chrome)
+  local zoomRect = safeCall(hsWindow.zoomButtonRect, hsWindow)
+  self.hasTitlebar = zoomRect ~= nil
+
+  -- Computed property
+  self.isHidden = not self.isVisible and not self.isMinimized
+
+  -- Tracking state (set by Tracker)
+  self.timeFocused = 0
+  self.appName = nil
+  self.appPid = nil
+
+  -- Reference to underlying hs.window (for API calls)
+  self._window = hsWindow
+
+  return self
+end
+
+--- Refresh mutable properties from the underlying window.
+--- Called after move/resize/title change events.
+--- @return boolean true if refresh succeeded, false if window is invalid
+function WindowInfo:refresh()
+  local win = self._window
+  if not win then return false end
+
+  -- Check if window is still valid
+  local id = safeCall(win.id, win)
+  if not id or id ~= self.id then return false end
+
+  -- Update mutable properties
+  self.title = safeCall(win.title, win) or ''
+  self.role = safeCall(win.subrole, win) or ''
+  self.frame = safeCall(win.frame, win)
+  self.screenId = safeGetScreenId(win)
+  self.isMinimized = safeCall(win.isMinimized, win) or false
+  self.isVisible = safeCall(win.isVisible, win) or false
+  self.isFullscreen = safeCall(win.isFullScreen, win) or false
+
+  local zoomRect = safeCall(win.zoomButtonRect, win)
+  self.hasTitlebar = zoomRect ~= nil
+
+  -- Recompute derived property
+  self.isHidden = not self.isVisible and not self.isMinimized
+
+  return true
+end
+
+--- String representation for debugging.
+function WindowInfo:__tostring()
+  return sformat('WindowInfo[%d]: "%s" (%s)', self.id, self.title, self.appName or '?')
+end
+
+-- Expose for testing
+windowfilter._WindowInfo = WindowInfo
+
+----------------------------------------------------------------------
+-- AppInfo: Snapshot of application state
+----------------------------------------------------------------------
+-- Tracks application properties and its windows.
+-- windows table is populated by Tracker.
+
+local AppInfo = {}
+AppInfo.__index = AppInfo
+
+--- Create a new AppInfo from an hs.application object.
+--- @param hsApp userdata The hs.application object
+--- @param pid number The process ID
+--- @return table|nil AppInfo object, or nil if hsApp is invalid
+function AppInfo.new(hsApp, pid)
+  if not hsApp then return nil end
+
+  local self = setmetatable({}, AppInfo)
+
+  -- Process identification
+  self.pid = pid or safeCall(hsApp.pid, hsApp) or 0
+
+  -- Application properties
+  self.name = safeCall(hsApp.name, hsApp) or ''
+  self.bundleID = safeCall(hsApp.bundleID, hsApp) or ''
+  self.isHidden = safeCall(hsApp.isHidden, hsApp) or false
+  self.isFrontmost = safeCall(hsApp.isFrontmost, hsApp) or false
+
+  -- Windows tracked for this app (id -> WindowInfo)
+  -- Populated by Tracker, not here
+  self.windows = {}
+
+  -- Watcher for this app's UI events (set by Tracker)
+  self.watcher = nil
+
+  -- Reference to underlying hs.application
+  self._app = hsApp
+
+  return self
+end
+
+--- Refresh application state properties.
+--- @return boolean true if refresh succeeded, false if app is invalid
+function AppInfo:refresh()
+  local app = self._app
+  if not app then return false end
+
+  -- Check if app is still running
+  local pid = safeCall(app.pid, app)
+  if not pid or pid ~= self.pid then return false end
+
+  self.isHidden = safeCall(app.isHidden, app) or false
+  self.isFrontmost = safeCall(app.isFrontmost, app) or false
+
+  return true
+end
+
+--- String representation for debugging.
+function AppInfo:__tostring()
+  local winCount = 0
+  for _ in pairs(self.windows) do winCount = winCount + 1 end
+  return sformat('AppInfo[%d]: %s (%d windows)', self.pid, self.name, winCount)
+end
+
+-- Expose for testing
+windowfilter._AppInfo = AppInfo
+
+----------------------------------------------------------------------
+-- SECTION 6: PLACEHOLDER FOR FUTURE COMPONENTS
 ----------------------------------------------------------------------
 -- Components will be added in subsequent steps:
--- Step 2: WindowInfo, AppInfo
 -- Step 3: FilterRules, Filter
 -- Step 4: PreFilter
 -- Step 5: Events, Subscriptions
