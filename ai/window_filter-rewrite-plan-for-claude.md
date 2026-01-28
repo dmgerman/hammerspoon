@@ -8,6 +8,19 @@
 
 This section provides explicit guidance for Claude (the AI assistant) on how to implement this rewrite. The implementation should be **incremental and test-driven**, not a single monolithic step.
 
+## Development Pragmatics (Early Stages)
+
+For Steps 1-4, use the simplest approach:
+- **Dependencies**: Use global `hs.*` namespace directly (e.g., `hs.application`, `hs.timer`)
+- **Logging**: Use `print()` for development visibility via `hs` CLI
+- **Internal testing**: Test utilities manually via `hs` CLI (they're not public API)
+- **Constants**: Use plan values initially; tune later based on real-world testing
+- **NEVER COMMIT**: Claude must never run `git commit`. Only the user commits. Provide commit messages when asked.
+
+This keeps early development fast. Formalize later if needed.
+
+---
+
 ## Core Principles
 
 1. **Never write a component without tests first** - Write the test, see it fail, implement the component, see it pass
