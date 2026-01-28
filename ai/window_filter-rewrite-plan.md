@@ -1,13 +1,52 @@
 # hs.window.filter Rewrite Plan
 
 **Date**: 2025-01-28
-**Status**: Planning
+**Status**: In Progress (Step 0 Complete)
 **Target**: Full API-compatible replacement for upstream `hs.window.filter`
 **Estimated Size**: ~1200-1500 lines (vs current ~2400)
 
 **Related Documents:**
 - [Technical Reference](window_filter-rewrite-info.md) - Data structures, component specs, API matrix, performance targets, test specs
 - [Implementation Guide](window_filter-rewrite-plan-for-claude.md) - Step-by-step implementation guidance for Claude
+
+---
+
+## Progress
+
+| Step | Description | Status | Notes |
+|------|-------------|--------|-------|
+| 0 | Contract Tests | **Complete** | 36 tests pass against current implementation |
+| 1 | Utilities + Core Constants | Not Started | |
+| 2 | WindowInfo + AppInfo | Not Started | |
+| 3 | FilterRules + Filter | Not Started | |
+| 4 | PreFilter | Not Started | |
+| 5 | Events + Subscriptions | Not Started | |
+| 6 | Tracker | Not Started | |
+| 7 | Manager | Not Started | |
+| 8 | WindowFilter Class | Not Started | |
+| 9 | Default Filters + Module Functions | Not Started | |
+| 10 | Contract Verification + Performance | Not Started | |
+
+### Step 0 Details (2025-01-28)
+
+**Created:** `extensions/window/test_window_filter.lua`
+
+**Tests:** 36 contract tests covering:
+- Constructor Tests (7): `new()`, `new(true)`, `new(false)`, `new(string)`, `new(table)`, `new({rules})`, `new(function)`
+- Method Chaining Tests (5): All filter methods return `self`
+- Filter Rules Tests (3): `visible`, `allowTitles`, `rejectApp`
+- getWindows Tests (3): Returns table, window objects, sort orders
+- Subscription Tests (5): `subscribe`, `unsubscribe`, `unsubscribeAll`, `pause`, `resume`
+- Module-Level API Tests (5): `default`, `defaultCurrentSpace`, `ignoreAlways`, event constants, sort constants
+- Copy Tests (1): Independent copy verification
+- Edge Case Tests (7): `setFilters`, `getFilters`, `isWindowAllowed`, `keepActive`, `setCurrentSpace`, `setScreens`, `setRegions`
+
+**Discoveries during testing:**
+1. `isAppAllowed()` returns `true` for all apps even with single-app/app-list filters - filtering happens at window level via `getWindows()`
+2. `setScreens()` expects a screen name (string), not a screen object
+3. `setRegions()` expects a table of regions, not a single region
+
+**Skipped:** `testRejectRegionsBug` - will be added in Step 10 to verify the fix
 
 ---
 
