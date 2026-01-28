@@ -135,7 +135,7 @@ Follow conventions in existing code (e.g., `window.lua`):
 
 ## Window Filter Rewrite
 
-**Current Status:** Step 0 Complete (Contract Tests)
+**Current Status:** Step 2 Complete (WindowInfo + AppInfo)
 
 **IMPORTANT:** Development happens in `window_filter_new.lua` - the user's running Hammerspoon (`hs.window.filter`) is never affected. Test new code by loading it separately:
 ```lua

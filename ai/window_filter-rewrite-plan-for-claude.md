@@ -11,13 +11,41 @@ This section provides explicit guidance for Claude (the AI assistant) on how to 
 ## Development Pragmatics (Early Stages)
 
 For Steps 1-4, use the simplest approach:
-- **Dependencies**: Use global `hs.*` namespace directly (e.g., `hs.application`, `hs.timer`)
-- **Logging**: Use `print()` for development visibility via `hs` CLI
+- **Dependencies**: Use global `hs.*` namespace directly (e.g., `hs.application`, `hs.timer`) - no `require()` for `dofile()` compatibility
+- **Logging**: Use `print()` for development visibility via `hs` CLI (switch to proper logger later)
 - **Internal testing**: Test utilities manually via `hs` CLI (they're not public API)
 - **Constants**: Use plan values initially; tune later based on real-world testing
 - **NEVER COMMIT**: Claude must never run `git commit`. Only the user commits. Provide commit messages when asked.
 
 This keeps early development fast. Formalize later if needed.
+
+## Development Conventions (Established)
+
+These conventions were decided during implementation and should be followed consistently:
+
+1. **Code style**: Follow `window.lua` conventions
+   - Local caching of globals at top of file
+   - Minimal whitespace
+   - Line length ~100 chars max
+   - LuaDoc comments for functions
+
+2. **File structure**: All components in single file `window_filter_new.lua` (not split into modules)
+
+3. **Testing exposure**: Expose internal components with `_` prefix for development testing
+   - Examples: `_WindowInfo`, `_AppInfo`, `_safeCall`, `_config`
+   - Contract tests (Step 10) validate through public API only
+
+4. **Test execution**: Run tests via `hs` CLI on demand with user approval
+   ```bash
+   /Users/dmg/bin/osx/hs -c 'local wf = dofile("..."); ...'
+   ```
+
+5. **Module header**: Full LuaDoc module header from the start (not deferred)
+
+6. **Documentation discipline**: After completing each step:
+   - Update CLAUDE.md status
+   - Add completion marker to step in this plan
+   - Document any new design decisions in relevant step section
 
 ---
 
@@ -58,7 +86,7 @@ Step 10: Run Step 0 tests against new implementation + performance validation
 
 ## Step-by-Step Implementation Details
 
-### Step 0: Contract Tests (~300 lines)
+### Step 0: Contract Tests (~300 lines) ✓ COMPLETE
 
 **Purpose**: Establish the behavioral contract by testing the CURRENT `hs.window.filter` implementation. These tests define what "API compatible" means. The new implementation must pass all these tests.
 
@@ -518,7 +546,7 @@ dofile('/Users/dmg/git.forks/hammerspoon/extensions/window/test_window_filter.lu
 
 ---
 
-### Step 1: Utilities + Core Constants (~100 lines)
+### Step 1: Utilities + Core Constants (~100 lines) ✓ COMPLETE
 
 **Files to create:**
 - `window_filter_new.lua` - Start the new module with just utilities
@@ -539,7 +567,7 @@ local Config = { ... }
 
 ---
 
-### Step 2: WindowInfo + AppInfo (~150 lines)
+### Step 2: WindowInfo + AppInfo (~150 lines) ✓ COMPLETE
 
 **What to implement:**
 - `WindowInfo.new(hsWindow)` - Safe property extraction
