@@ -546,6 +546,21 @@ local Config = { ... }
 - `WindowInfo:refresh()` - Update mutable properties
 - `AppInfo.new(hsApp, pid)` - Safe property extraction
 
+**Design Decisions:**
+
+1. **WindowInfo.appName/appPid**: NOT set in `WindowInfo.new()`. These are set by Tracker after construction (`windowInfo.appName = appInfo.name`). This maintains separation of concerns - WindowInfo extracts window properties, Tracker associates them with apps.
+
+2. **Timestamps for sorting**: WindowInfo includes:
+   - `timeCreated` - set to `hs.timer.absoluteTime()` in `WindowInfo.new()`
+   - `timeFocused` - initialized to 0, updated by Tracker on focus events
+   This ensures sort comparators work correctly from the start.
+
+3. **role field**: Uses `hsWindow:subrole()` (not `role()`). The existing implementation checks subrole against ALLOWED_ROLES (AXStandardWindow, AXDialog, AXSystemDialog). Field is named `role` in WindowInfo for clarity.
+
+4. **AppInfo.windows**: Initialized as empty `{}` in `AppInfo.new()`. Tracker populates it via `registerAppWindows()` and `registerWindow()`. AppInfo doesn't enumerate windows itself.
+
+5. **Testing exposure**: Expose `_WindowInfo` and `_AppInfo` with `_` prefix for development testing. Contract tests (Step 10) validate through public API.
+
 **Tests to write first:**
 ```lua
 Test.describe('WindowInfo', function()
