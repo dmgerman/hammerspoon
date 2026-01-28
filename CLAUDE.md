@@ -2,6 +2,8 @@
 
 This file contains essential information for building and testing Hammerspoon.
 
+**IMPORTANT: Never commit.** Only the user commits. Provide commit messages when asked.
+
 ## Build System Overview
 
 Hammerspoon uses Xcode with a shell-based build wrapper script.
