@@ -23,26 +23,28 @@ This keeps early development fast. Formalize later if needed.
 
 These conventions were decided during implementation and should be followed consistently:
 
-1. **Code style**: Follow `window.lua` conventions
+1. **Avoid global state**: Always prefer passing state explicitly (via parameters or object properties) over using module-level globals. Global state makes code harder to reason about, test, and maintain. Only use globals when strictly necessary (e.g., singleton Manager instance).
+
+2. **Code style**: Follow `window.lua` conventions
    - Local caching of globals at top of file
    - Minimal whitespace
    - Line length ~100 chars max
    - LuaDoc comments for functions
 
-2. **File structure**: All components in single file `window_filter_new.lua` (not split into modules)
+3. **File structure**: All components in single file `window_filter_new.lua` (not split into modules)
 
-3. **Testing exposure**: Expose internal components with `_` prefix for development testing
+4. **Testing exposure**: Expose internal components with `_` prefix for development testing
    - Examples: `_WindowInfo`, `_AppInfo`, `_safeCall`, `_config`
    - Contract tests (Step 10) validate through public API only
 
-4. **Test execution**: Run tests via `hs` CLI on demand with user approval
+5. **Test execution**: Run tests via `hs` CLI on demand with user approval
    ```bash
    /Users/dmg/bin/osx/hs -c 'local wf = dofile("..."); ...'
    ```
 
-5. **Module header**: Full LuaDoc module header from the start (not deferred)
+6. **Module header**: Full LuaDoc module header from the start (not deferred)
 
-6. **Documentation discipline**: After completing each step:
+7. **Documentation discipline**: After completing each step:
    - Update CLAUDE.md status
    - Add completion marker to step in this plan
    - Document any new design decisions in relevant step section
@@ -618,13 +620,25 @@ end)
 
 ---
 
-### Step 3: FilterRules + Filter (~200 lines)
+### Step 3: FilterRules + Filter (~200 lines) ✓ COMPLETE
 
 **What to implement:**
 - `FilterRules.new()` - Rule storage
 - `Filter.matches(rules, windowInfo, context)` - Main matching logic
 - `Filter.matchesRule(rule, windowInfo, context)` - Single rule matching
 - All rule criteria: visible, currentSpace, fullscreen, focused, activeApplication, hasTitlebar, allowTitles, rejectTitles, allowRoles, allowScreens, rejectScreens, allowRegions, rejectRegions
+
+**Design Decisions (Step 3):**
+
+1. **isInCurrentSpace on WindowInfo**: Added `isInCurrentSpace` field to WindowInfo (initialized to `nil`). Tracker will maintain this field. Filter checks it directly without needing it in context.
+
+2. **Context shape**: Minimal context passed to Filter: `{focusedWindowId, activeAppPid}`. No global state references.
+
+3. **Screen resolution**: Screens resolved lazily at match time via `Filter.resolveScreens()` using `hs.screen.find()`. This handles hot-plugging better than eager resolution.
+
+4. **rejectRegions bug fixed**: The original implementation had a bug on line 228 where it used `filter.allowRegions` instead of `filter.rejectRegions`. Fixed in the new implementation.
+
+5. **allowRoles normalization**: Handles string, array, set, or `'*'` formats for allowRoles. Normalizes to set internally for consistent lookup.
 
 **Tests to write first:**
 ```lua

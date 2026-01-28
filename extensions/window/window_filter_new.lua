@@ -171,6 +171,7 @@ function WindowInfo.new(hsWindow)
   self.timeFocused = 0
   self.appName = nil
   self.appPid = nil
+  self.isInCurrentSpace = nil  -- Set by Tracker; nil means unknown
 
   -- Reference to underlying hs.window (for API calls)
   self._window = hsWindow
@@ -282,10 +283,322 @@ end
 windowfilter._AppInfo = AppInfo
 
 ----------------------------------------------------------------------
--- SECTION 6: PLACEHOLDER FOR FUTURE COMPONENTS
+-- SECTION 6: FILTER RULES AND FILTER
+----------------------------------------------------------------------
+
+----------------------------------------------------------------------
+-- FilterRules: Storage for filter configuration
+----------------------------------------------------------------------
+-- Stores override, per-app, and default filter rules.
+-- Each rule is either false (reject all) or a table of criteria.
+
+local FilterRules = {}
+FilterRules.__index = FilterRules
+
+--- Create a new FilterRules object.
+--- @return table FilterRules object
+function FilterRules.new()
+  local self = setmetatable({}, FilterRules)
+  self.override = nil       -- Applied first to all windows; false = reject all
+  self.appRules = {}        -- appname -> rule table or false
+  self.default = nil        -- Fallback rule; false = reject all
+  return self
+end
+
+--- String representation for debugging.
+function FilterRules:__tostring()
+  local appCount = 0
+  for _ in pairs(self.appRules) do appCount = appCount + 1 end
+  return sformat('FilterRules: override=%s, apps=%d, default=%s',
+    tostring(self.override ~= nil), appCount, tostring(self.default ~= nil))
+end
+
+-- Expose for testing
+windowfilter._FilterRules = FilterRules
+
+----------------------------------------------------------------------
+-- Filter: Pure functions for matching windows against rules
+----------------------------------------------------------------------
+-- All matching logic is stateless and side-effect free.
+-- Context is passed explicitly to avoid global state.
+
+local Filter = {}
+
+--- Match a window against a complete FilterRules structure.
+--- Checks override, then app-specific, then default rules.
+--- @param rules table FilterRules object
+--- @param windowInfo table WindowInfo object
+--- @param context table {focusedWindowId, activeAppPid}
+--- @return boolean allowed, string reason
+function Filter.matches(rules, windowInfo, context)
+  if not rules then return true, '' end
+  if not windowInfo then return false, 'nil windowInfo' end
+
+  local appName = windowInfo.appName or ''
+
+  -- Check override filter (applied to all windows)
+  if rules.override == false then
+    return false, 'override rejects all'
+  end
+  if rules.override then
+    local ok, reason = Filter.matchesRule(rules.override, windowInfo, context)
+    if not ok then
+      return false, 'override: ' .. reason
+    end
+  end
+
+  -- Check app-specific filter
+  local appRule = rules.appRules[appName]
+  if appRule == false then
+    return false, 'app rejected'
+  end
+  if appRule then
+    local ok, reason = Filter.matchesRule(appRule, windowInfo, context)
+    return ok, ok and '' or ('app: ' .. reason)
+  end
+
+  -- Check default filter
+  if rules.default == false then
+    return false, 'default rejects all'
+  end
+  if rules.default then
+    local ok, reason = Filter.matchesRule(rules.default, windowInfo, context)
+    return ok, ok and '' or ('default: ' .. reason)
+  end
+
+  -- No filter = allow
+  return true, ''
+end
+
+--- Match a window against a single rule table.
+--- @param rule table Rule with filter criteria
+--- @param windowInfo table WindowInfo object
+--- @param context table {focusedWindowId, activeAppPid}
+--- @return boolean allowed, string reason
+function Filter.matchesRule(rule, windowInfo, context)
+  if not rule then return true, '' end
+  context = context or {}
+
+  -- Visibility
+  if rule.visible ~= nil then
+    if rule.visible ~= windowInfo.isVisible then
+      return false, 'visible'
+    end
+  end
+
+  -- Current space
+  if rule.currentSpace ~= nil then
+    if rule.currentSpace ~= windowInfo.isInCurrentSpace then
+      return false, 'currentSpace'
+    end
+  end
+
+  -- Fullscreen
+  if rule.fullscreen ~= nil then
+    if rule.fullscreen ~= windowInfo.isFullscreen then
+      return false, 'fullscreen'
+    end
+  end
+
+  -- Focused
+  if rule.focused ~= nil then
+    local isFocused = (windowInfo.id == context.focusedWindowId)
+    if rule.focused ~= isFocused then
+      return false, 'focused'
+    end
+  end
+
+  -- Active application
+  if rule.activeApplication ~= nil then
+    local isActive = (windowInfo.appPid == context.activeAppPid)
+    if rule.activeApplication ~= isActive then
+      return false, 'activeApplication'
+    end
+  end
+
+  -- Allow titles (minimum length or pattern match)
+  if rule.allowTitles then
+    if not Filter.matchesTitleRule(rule.allowTitles, windowInfo.title) then
+      return false, 'allowTitles'
+    end
+  end
+
+  -- Reject titles (pattern match)
+  if rule.rejectTitles then
+    if Filter.matchesTitlePattern(rule.rejectTitles, windowInfo.title) then
+      return false, 'rejectTitles'
+    end
+  end
+
+  -- Titlebar
+  if rule.hasTitlebar ~= nil then
+    if rule.hasTitlebar ~= windowInfo.hasTitlebar then
+      return false, 'hasTitlebar'
+    end
+  end
+
+  -- Roles (check subrole against allowed list)
+  local allowedRoles = rule.allowRoles or Config.ALLOWED_ROLES
+  if allowedRoles ~= '*' then
+    if type(allowedRoles) == 'string' then
+      allowedRoles = {[allowedRoles] = true}
+    elseif type(allowedRoles) == 'table' and allowedRoles[1] then
+      -- Convert array to set
+      local roleSet = {}
+      for _, r in ipairs(allowedRoles) do roleSet[r] = true end
+      allowedRoles = roleSet
+    end
+    if not allowedRoles[windowInfo.role] then
+      return false, 'allowRoles'
+    end
+  end
+
+  -- Regions and screens only apply to visible windows
+  if windowInfo.isVisible then
+    -- Allow regions (window must be in at least one region)
+    if rule.allowRegions then
+      if not Filter.matchesRegions(rule.allowRegions, windowInfo.frame) then
+        return false, 'allowRegions'
+      end
+    end
+
+    -- Reject regions (window must NOT be in any region)
+    -- NOTE: Fixed bug from original - was using allowRegions instead of rejectRegions
+    if rule.rejectRegions then
+      if Filter.matchesRegions(rule.rejectRegions, windowInfo.frame) then
+        return false, 'rejectRegions'
+      end
+    end
+
+    -- Allow screens (window must be on at least one screen)
+    if rule.allowScreens then
+      local allowedScreenIds = Filter.resolveScreens(rule.allowScreens)
+      if not allowedScreenIds[windowInfo.screenId] then
+        return false, 'allowScreens'
+      end
+    end
+
+    -- Reject screens (window must NOT be on any screen)
+    if rule.rejectScreens then
+      local rejectedScreenIds = Filter.resolveScreens(rule.rejectScreens)
+      if rejectedScreenIds[windowInfo.screenId] then
+        return false, 'rejectScreens'
+      end
+    end
+  end
+
+  return true, ''
+end
+
+--- Match title against allowTitles rule.
+--- If rule is a number, checks minimum title length.
+--- Otherwise delegates to pattern matching.
+--- @param rule number|string|table The allowTitles rule
+--- @param title string The window title
+--- @return boolean true if title matches rule
+function Filter.matchesTitleRule(rule, title)
+  if type(rule) == 'number' then
+    return #title >= rule
+  end
+  return Filter.matchesTitlePattern(rule, title)
+end
+
+--- Match title against pattern(s).
+--- @param patterns string|table Pattern or list of patterns
+--- @param title string The window title
+--- @return boolean true if title matches any pattern
+function Filter.matchesTitlePattern(patterns, title)
+  if type(patterns) == 'string' then
+    patterns = {patterns}
+  end
+  if type(patterns) ~= 'table' then
+    return false
+  end
+  for _, pattern in ipairs(patterns) do
+    if smatch(title, pattern) then
+      return true
+    end
+  end
+  return false
+end
+
+--- Match window frame against regions using 50% overlap rule.
+--- Window matches if:
+---   - More than 50% of window is inside a region, OR
+---   - More than 50% of a region is covered by the window
+--- @param regions table List of hs.geometry rects
+--- @param frame table Window frame (hs.geometry rect)
+--- @return boolean true if window matches any region
+function Filter.matchesRegions(regions, frame)
+  if not regions or not frame then return false end
+  if type(regions) ~= 'table' then
+    regions = {regions}
+  end
+  -- Ensure regions is a list (might be single rect)
+  if regions.x ~= nil then
+    regions = {regions}
+  end
+
+  for _, region in ipairs(regions) do
+    -- Use hs.geometry intersection
+    local intersection = frame:intersect(region)
+    if intersection and intersection.area and intersection.area > 0 then
+      local frameArea = frame.area or (frame.w * frame.h)
+      local regionArea = region.area or (region.w * region.h)
+      if frameArea > 0 and regionArea > 0 then
+        -- Check 50% overlap rule
+        if intersection.area > frameArea * 0.5 or intersection.area > regionArea * 0.5 then
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
+
+--- Resolve screen hints to screen IDs.
+--- Resolved lazily at match time for hot-plug reliability.
+--- @param screenHints any Valid argument(s) for hs.screen.find()
+--- @return table Set of screen IDs {[id] = true}
+function Filter.resolveScreens(screenHints)
+  local ids = {}
+  if screenHints == nil then return ids end
+
+  -- Normalize to list
+  if type(screenHints) ~= 'table' or screenHints.id then
+    -- Single screen or screen hint
+    screenHints = {screenHints}
+  end
+
+  for _, hint in ipairs(screenHints) do
+    local scr = nil
+    -- If hint is already a screen object, use it directly
+    if type(hint) == 'userdata' or (type(hint) == 'table' and hint.id) then
+      scr = hint
+    else
+      -- Use hs.screen.find to resolve hint
+      local ok, result = pcall(hs.screen.find, hint)
+      if ok then scr = result end
+    end
+
+    if scr then
+      local ok, id = pcall(scr.id, scr)
+      if ok and id then
+        ids[id] = true
+      end
+    end
+  end
+
+  return ids
+end
+
+-- Expose for testing
+windowfilter._Filter = Filter
+
+----------------------------------------------------------------------
+-- SECTION 7: PLACEHOLDER FOR FUTURE COMPONENTS
 ----------------------------------------------------------------------
 -- Components will be added in subsequent steps:
--- Step 3: FilterRules, Filter
 -- Step 4: PreFilter
 -- Step 5: Events, Subscriptions
 -- Step 6: Tracker
