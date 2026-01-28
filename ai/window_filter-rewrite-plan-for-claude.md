@@ -56,6 +56,18 @@ These conventions were decided during implementation and should be followed cons
 3. **API compatibility verification at each step** - Don't proceed if existing API behavior breaks
 4. **Commit after each working milestone** - User can request commits at stable points
 
+## Clarification Process
+
+Before starting any step, Claude should:
+
+1. **Inspect the current implementation first** - Read the relevant sections of `window_filter.lua` to understand how the existing code handles the functionality being implemented. This is the source of truth for behavioral requirements.
+
+2. **Check the technical reference** - Read `window_filter-rewrite-info.md` for data structure specs and API details.
+
+3. **Ask the user only for unresolved questions** - If the current implementation doesn't clarify something, or if there's a design decision that differs from the original, ask the user before proceeding.
+
+This ensures implementation matches existing behavior and minimizes back-and-forth.
+
 ## Recommended Implementation Order
 
 The implementation should follow this dependency order, where each step builds on the previous:
