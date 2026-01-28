@@ -48,6 +48,8 @@
 
 **Skipped:** `testRejectRegionsBug` - will be added in Step 10 to verify the fix
 
+**Development approach:** All work happens in `window_filter_new.lua`. The user's running `hs.window.filter` is never modified during Steps 1-9. See implementation guide for details.
+
 ---
 
 ## Table of Contents

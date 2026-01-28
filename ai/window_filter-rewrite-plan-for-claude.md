@@ -808,6 +808,46 @@ Each step above is designed to be completable in a **single Claude session**. Ho
 2. **At session start**: Read this plan document and relevant test files
 3. **Resumption prompt**: "Continue implementing window_filter rewrite from Step N"
 
+## Development Without Disrupting User's Hammerspoon
+
+**CRITICAL:** The user's running Hammerspoon must remain fully functional during all development steps.
+
+### How It Works
+
+1. **User's running Hammerspoon:** Uses `hs.window.filter` from the installed app - never modified during development.
+
+2. **New implementation:** Created as `window_filter_new.lua` in the source repo - a completely separate file.
+
+3. **Testing new code:** Load the new module separately without replacing the system one:
+   ```lua
+   -- Load new implementation (does NOT affect hs.window.filter)
+   local wf_new = dofile('/Users/dmg/git.forks/hammerspoon/extensions/window/window_filter_new.lua')
+
+   -- Test it
+   local f = wf_new.new()
+   print(f:getWindows())
+   f:delete()
+   ```
+
+4. **Contract tests:** Only in Step 10, temporarily swap `hs.window.filter` to run the full contract test suite against the new implementation. Ask user permission first.
+
+### Per-Step Testing Pattern
+
+For Steps 1-9, use this pattern to test new code:
+
+```lua
+-- Via hs CLI:
+/Users/dmg/bin/osx/hs -c '
+local wf_new = dofile("/Users/dmg/git.forks/hammerspoon/extensions/window/window_filter_new.lua")
+-- Run specific tests against wf_new
+print(wf_new.someFunction())
+'
+```
+
+The user can continue using Hammerspoon normally throughout development.
+
+---
+
 ## File Organization During Development
 
 Development happens in the Hammerspoon source repository:
