@@ -682,6 +682,10 @@ end)
 
 6. **requireTitle defaults to false**: Empty-title windows are common (dialogs, new windows, palettes). If PreFilter rejects them, we won't create watchers and will miss title changes. Title filtering should happen at Filter level via `allowTitles`, not PreFilter level.
 
+**Integration notes for later steps:**
+- **Step 6 (Tracker)**: Call `shouldTrackApp` before creating app watchers, `shouldTrack` before window watchers. Pass config with `ignoreAppNames = windowfilter.ignoreAlways`.
+- **Step 9**: Implement `windowfilter.isGuiApp(appname)` using the same logic (check ignoreAlways + ignoreAppPattern), not duplicating it.
+
 **Exit criteria:** PreFilter correctly filters apps/windows before watcher creation
 
 ---
