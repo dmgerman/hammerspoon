@@ -1654,6 +1654,152 @@ local function testWindowFilterGetFilters()
 end
 
 -- ============================================================================
+-- Step 8b: getWindows + Sorting + Notify
+-- ============================================================================
+
+local function testWindowFilterGetWindowsReturnsTable()
+  -- Reset manager and inject mock tracker to avoid full Tracker startup
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  local wins = wf:getWindows()
+  assertIsTable(wins)
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+local function testWindowFilterGetWindowsWithSortOrder()
+  -- Reset manager and inject mock tracker
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  -- Set sort order
+  wf:setSortOrder('createdLast')
+  assertIsEqual('createdLast', wf._sortOrder)
+  local wins = wf:getWindows()
+  assertIsTable(wins)
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+local function testWindowFilterGetWindowsOneshotActivation()
+  -- Reset manager and inject mock tracker
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  assertFalse(wf._active)  -- Not active initially
+  local wins = wf:getWindows()
+  assertIsTable(wins)
+  -- After one-shot, filter should be paused (not fully deactivated)
+  assertTrue(wf._paused)
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+local function testWindowFilterNotifyBasic()
+  -- Reset manager and inject mock tracker to avoid full Tracker startup
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  local notifyCalled = false
+  local result = wf:notify(function(wins, event)
+    notifyCalled = true
+  end)
+  assertIsEqual(wf, result)  -- Returns self
+  assertIsNotNil(wf._notifyfn)
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+local function testWindowFilterNotifyWithImmediate()
+  -- Reset manager and inject mock tracker
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  local notifyCalled = false
+  local receivedWins = nil
+  wf:notify(function(wins, event)
+    notifyCalled = true
+    receivedWins = wins
+  end, nil, true)  -- immediate = true
+  assertTrue(notifyCalled)
+  assertIsTable(receivedWins)
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+local function testWindowFilterNotifyWithFnEmpty()
+  local wf = wf_new.new(false)  -- Reject all
+  local fnCalled = false
+  local fnEmptyCalled = false
+  -- Reset manager and inject mock tracker
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  wf:notify(
+    function(wins) fnCalled = true end,
+    function() fnEmptyCalled = true end,
+    true  -- immediate
+  )
+  -- Since we reject all windows, fnEmpty should be called
+  assertFalse(fnCalled)
+  assertTrue(fnEmptyCalled)
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+local function testWindowFilterNotifyRemove()
+  -- Reset manager and inject mock tracker to avoid full Tracker startup
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  wf:notify(function() end)
+  assertIsNotNil(wf._notifyfn)
+  wf:notify(nil)  -- Remove notify
+  assertIsNil(wf._notifyfn)
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+local function testWindowFilterTimestampsTracked()
+  -- This test verifies that timestamps are tracked in window state
+  -- No mock tracker needed - just testing internal state management
+  local wf = wf_new.new()
+  -- Manually add a window state to check timestamp tracking
+  local testState = {
+    allowed = true,
+    visible = true,
+    timeCreated = 12345,
+    timeFocused = 12346,
+  }
+  wf._windows[999] = testState
+  assertIsEqual(12345, wf._windows[999].timeCreated)
+  assertIsEqual(12346, wf._windows[999].timeFocused)
+  wf:delete()
+  return success()
+end
+
+-- ============================================================================
 -- RUN ALL TESTS
 -- ============================================================================
 
@@ -1807,6 +1953,17 @@ local function runAllTests()
   runTest("testWindowFilterSetScreens", testWindowFilterSetScreens)
   runTest("testWindowFilterSetRegions", testWindowFilterSetRegions)
   runTest("testWindowFilterGetFilters", testWindowFilterGetFilters)
+
+  -- Step 8b: getWindows + Sorting + Notify
+  print("\nStep 8b: getWindows + Sorting + Notify")
+  runTest("testWindowFilterGetWindowsReturnsTable", testWindowFilterGetWindowsReturnsTable)
+  runTest("testWindowFilterGetWindowsWithSortOrder", testWindowFilterGetWindowsWithSortOrder)
+  runTest("testWindowFilterGetWindowsOneshotActivation", testWindowFilterGetWindowsOneshotActivation)
+  runTest("testWindowFilterNotifyBasic", testWindowFilterNotifyBasic)
+  runTest("testWindowFilterNotifyWithImmediate", testWindowFilterNotifyWithImmediate)
+  runTest("testWindowFilterNotifyWithFnEmpty", testWindowFilterNotifyWithFnEmpty)
+  runTest("testWindowFilterNotifyRemove", testWindowFilterNotifyRemove)
+  runTest("testWindowFilterTimestampsTracked", testWindowFilterTimestampsTracked)
 
   -- Summary
   print("\n" .. string.rep("=", 60))

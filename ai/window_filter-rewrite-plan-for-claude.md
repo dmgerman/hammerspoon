@@ -892,7 +892,7 @@ end
 
 ---
 
-### Step 8b: getWindows + Sorting + Notify (~100 lines)
+### Step 8b: getWindows + Sorting + Notify (~100 lines) ✓ COMPLETE
 
 **What to implement:**
 - `getWindows([sortOrder])` - Return filtered windows with sorting

@@ -47,6 +47,9 @@ local tinsert, tremove, tsort = table.insert, table.remove, table.sort
 local sformat, smatch, sfind = string.format, string.match, string.find
 local floor, min, max = math.floor, math.min, math.max
 
+-- hs.* caching for dofile() compatibility
+local timer = hs.timer
+
 ----------------------------------------------------------------------
 -- SECTION 2: MODULE TABLE
 ----------------------------------------------------------------------
@@ -2230,6 +2233,8 @@ local STATE_VISIBLE = 'visible'
 local STATE_ON_SCREEN = 'onScreen'
 local STATE_IN_SPACE = 'inCurrentSpace'
 local STATE_FOCUSED = 'focused'
+local STATE_TIME_CREATED = 'timeCreated'
+local STATE_TIME_FOCUSED = 'timeFocused'
 
 ----------------------------------------------------------------------
 -- Constructor
@@ -2248,6 +2253,7 @@ function WindowFilter.new(fn, logname, loglevel)
   self._subscriptions = Subscriptions.new()  -- Event subscriptions
   self._windows = {}                    -- {windowId -> {state table}}
   self._customFilter = nil              -- Custom filter function (if any)
+  self._notifyfn = nil                  -- Notify callback for window list changes
   self._paused = false                  -- Paused state
   self._active = false                  -- Whether activated with Manager
   self._trackSpaces = false             -- Whether to track space changes
@@ -2432,6 +2438,82 @@ function WindowFilter:setSortOrder(order)
   return self
 end
 
+-- Sorting comparators for getWindows
+local sortingComparators = {
+  focusedLast = function(a, b)
+    return (a[STATE_TIME_FOCUSED] or 0) > (b[STATE_TIME_FOCUSED] or 0)
+  end,
+  focused = function(a, b)
+    return (a[STATE_TIME_FOCUSED] or 0) < (b[STATE_TIME_FOCUSED] or 0)
+  end,
+  createdLast = function(a, b)
+    return (a[STATE_TIME_CREATED] or 0) > (b[STATE_TIME_CREATED] or 0)
+  end,
+  created = function(a, b)
+    return (a[STATE_TIME_CREATED] or 0) < (b[STATE_TIME_CREATED] or 0)
+  end,
+}
+
+--- Get the currently allowed windows.
+--- @param sortOrder string|nil Sort order (defaults to filter's sort order or focusedLast)
+--- @return table List of hs.window objects
+function WindowFilter:getWindows(sortOrder)
+  -- One-shot activation: temporarily activate if not active
+  local wasActive = self._active
+  if not wasActive then
+    Manager.getInstance():activate(self)
+    self._active = true
+  end
+
+  -- Collect allowed windows with their state for sorting
+  local windowsWithState = {}
+  local manager = Manager.getInstance()
+  local tracker = manager:getTracker()
+
+  for windowId, state in pairs(self._windows) do
+    if state[STATE_ALLOWED] then
+      -- Get the hs.window object from tracker
+      local hsWindow = nil
+      if tracker then
+        for _, appInfo in pairs(tracker.apps) do
+          if appInfo.windows[windowId] then
+            hsWindow = appInfo.windows[windowId]._window
+            break
+          end
+        end
+      end
+      if hsWindow then
+        windowsWithState[#windowsWithState + 1] = {
+          window = hsWindow,
+          state = state,
+          [STATE_TIME_FOCUSED] = state[STATE_TIME_FOCUSED],
+          [STATE_TIME_CREATED] = state[STATE_TIME_CREATED],
+        }
+      end
+    end
+  end
+
+  -- Sort windows
+  local order = sortOrder or self._sortOrder or 'focusedLast'
+  local comparator = sortingComparators[order]
+  if comparator then
+    tsort(windowsWithState, comparator)
+  end
+
+  -- Extract just the hs.window objects
+  local result = {}
+  for i, entry in ipairs(windowsWithState) do
+    result[i] = entry.window
+  end
+
+  -- Pause if wasn't active before (one-shot mode)
+  if not wasActive then
+    self:pause()
+  end
+
+  return result
+end
+
 --- Set whether to only include windows in current space.
 --- @param current boolean
 --- @return table self
@@ -2596,6 +2678,55 @@ function WindowFilter:unsubscribeAll()
   return self
 end
 
+--- Set a callback to be notified when the window list changes.
+--- @param fn function|nil Callback function (receives list of windows and event)
+--- @param fnEmpty function|nil Optional callback for when filter has no windows
+--- @param immediate boolean|nil If true, also call callback immediately
+--- @return table self
+function WindowFilter:notify(fn, fnEmpty, immediate)
+  if fn ~= nil and type(fn) ~= 'function' then
+    error('fn must be a function or nil', 2)
+  end
+  -- Handle optional fnEmpty and immediate arguments
+  if fnEmpty and type(fnEmpty) ~= 'function' then
+    fnEmpty = nil
+    immediate = true
+  end
+  if fnEmpty ~= nil and type(fnEmpty) ~= 'function' then
+    error('fnEmpty must be a function or nil', 2)
+  end
+
+  -- Store the notify function
+  if fnEmpty then
+    self._notifyfn = function(wins, event)
+      if #wins > 0 then
+        return fn(wins, event)
+      else
+        return fnEmpty()
+      end
+    end
+  else
+    self._notifyfn = fn
+  end
+
+  -- Activate or deactivate based on whether we have a notify function
+  if fn then
+    if not self._active then
+      Manager.getInstance():activate(self)
+      self._active = true
+    end
+  elseif not self._subscriptions:hasAny() then
+    self:pause()
+  end
+
+  -- Call immediately if requested
+  if fn and immediate then
+    self._notifyfn(self:getWindows(), nil)
+  end
+
+  return self
+end
+
 ----------------------------------------------------------------------
 -- Event Handling (called by Manager)
 ----------------------------------------------------------------------
@@ -2627,6 +2758,7 @@ function WindowFilter:_handleTrackerEvent(eventType, windowInfo, appInfo)
   local windowId = windowInfo.id
   local oldState = self._windows[windowId]
   local newState = self:_computeWindowState(windowInfo, appInfo)
+  local now = timer.secondsSinceEpoch()
 
   -- Handle window destruction
   if eventType == 'windowDestroyed' then
@@ -2636,6 +2768,21 @@ function WindowFilter:_handleTrackerEvent(eventType, windowInfo, appInfo)
     end
     self._windows[windowId] = nil
     return
+  end
+
+  -- Track timestamps for sorting
+  if oldState then
+    -- Preserve existing timestamps
+    newState[STATE_TIME_CREATED] = oldState[STATE_TIME_CREATED]
+    newState[STATE_TIME_FOCUSED] = oldState[STATE_TIME_FOCUSED]
+  end
+  -- Set timeCreated if window first becomes allowed
+  if newState[STATE_ALLOWED] and not newState[STATE_TIME_CREATED] then
+    newState[STATE_TIME_CREATED] = now
+  end
+  -- Update timeFocused on focus events
+  if eventType == 'windowFocused' and newState[STATE_ALLOWED] then
+    newState[STATE_TIME_FOCUSED] = now
   end
 
   -- Store new state
@@ -2671,6 +2818,7 @@ function WindowFilter:_handleFocusChanged(windowInfo, appInfo, prevWindowInfo)
     local newState = self._windows[windowInfo.id]
     if newState and newState[STATE_ALLOWED] then
       newState[STATE_FOCUSED] = true
+      newState[STATE_TIME_FOCUSED] = timer.secondsSinceEpoch()
       self:_emitEvent('windowFocused', windowInfo, appInfo)
     end
   end
@@ -2771,6 +2919,13 @@ function WindowFilter:_emitStateChanges(oldState, newState, windowInfo, appInfo)
       self:_emitEvent('windowUnminimized', windowInfo, appInfo)
     end
   end
+
+  -- Call notify function if window list changed (allowed status changed)
+  if self._notifyfn and (isAllowed ~= wasAllowed) then
+    -- Get the event type that triggered this
+    local eventType = isAllowed and 'windowAllowed' or 'windowRejected'
+    self._notifyfn(self:getWindows(), eventType)
+  end
 end
 
 --- Handle app-level events.
@@ -2810,11 +2965,27 @@ function WindowFilter:_refreshAllWindows()
   local tracker = manager:getTracker()
   if not tracker then return end
 
+  local now = timer.secondsSinceEpoch()
+  local context = manager:getContext()
+
   -- Re-process all tracked windows
   for _, appInfo in pairs(tracker.apps) do
     for _, windowInfo in pairs(appInfo.windows) do
       local oldState = self._windows[windowInfo.id] or {}
       local newState = self:_computeWindowState(windowInfo, appInfo)
+
+      -- Preserve or set timestamps
+      if oldState[STATE_TIME_CREATED] then
+        newState[STATE_TIME_CREATED] = oldState[STATE_TIME_CREATED]
+        newState[STATE_TIME_FOCUSED] = oldState[STATE_TIME_FOCUSED]
+      elseif newState[STATE_ALLOWED] then
+        newState[STATE_TIME_CREATED] = now
+        -- Set timeFocused if this is the focused window
+        if context.focusedWindowId == windowInfo.id then
+          newState[STATE_TIME_FOCUSED] = now
+        end
+      end
+
       self._windows[windowInfo.id] = newState
       self:_emitStateChanges(oldState, newState, windowInfo, appInfo)
     end
