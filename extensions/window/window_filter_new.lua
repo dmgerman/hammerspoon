@@ -61,27 +61,137 @@ windowfilter._VERSION = '2.0.0-dev'
 -- SECTION 3: CONFIGURATION
 ----------------------------------------------------------------------
 
---- Configuration constants for the window filter system.
---- These values can be tuned based on real-world testing.
---- All configuration is centralized here for easy discovery and modification.
+--- hs.window.filter._config
+--- Variable
+--- Internal configuration table for tuning window filter behavior.
+---
+--- This table centralizes all configuration parameters for the window filter system.
+--- While internal (prefixed with `_`), it is exposed to allow advanced users to tune
+--- performance and filtering behavior. Changes take effect immediately for new operations.
+---
+--- The configuration is organized into the following sections:
+---
+--- **timing** - Controls delays and retry behavior (all values in seconds):
+---  * `retryDelay` (number, default 0.2): Base delay between retry attempts when registering
+---    windows or apps. The actual delay increases with each retry (retryCount * retryDelay).
+---    When a window or app is first detected, it may not be fully initialized. The system
+---    retries registration until the window/app is ready or max retries is reached.
+---  * `maxRetries` (number, default 5): Maximum number of attempts to register a window or app
+---    before giving up. With default settings, the system will try for up to 3 seconds
+---    (0.2 + 0.4 + 0.6 + 0.8 + 1.0) before abandoning registration.
+---  * `movedDebounce` (number, default 0.5): Debounce interval for window moved events.
+---    When a window is being dragged or resized, macOS fires many rapid move events.
+---    This setting coalesces them into a single event fired after movement stops.
+---  * `titleDebounce` (number, default 0.5): Debounce interval for window title changes.
+---    Some apps update titles frequently (e.g., terminals showing command output).
+---    This prevents excessive event firing during rapid title updates.
+---  * `spaceChangeDelay` (number, default 0.5): Delay after a Mission Control Space change
+---    before refreshing window state. macOS needs time to settle after space switches;
+---    querying too early may return stale or incomplete window information.
+---  * `zombieCleanupInterval` (number, default 300): Seconds between checks for "zombie" apps.
+---    Zombie apps are tracked apps whose processes have terminated but weren't properly
+---    cleaned up due to missed termination events. This periodic cleanup prevents memory
+---    leaks from accumulated stale app references.
+---
+--- **performance** - Controls performance-related behavior:
+---  * `accessibilityTimeout` (number, default 0.5): Maximum seconds to wait for macOS
+---    Accessibility API responses. Some apps (especially Electron-based ones) can be slow
+---    to respond to accessibility queries. This timeout prevents the system from hanging.
+---  * `skipSlowApps` (boolean, default false): If true, apps that exceed the accessibility
+---    timeout will be skipped entirely and not tracked. If false (default), slow apps are
+---    still tracked but with degraded responsiveness. Enable this if you experience
+---    performance issues with specific slow apps.
+---
+--- **filtering** - Default filtering rules applied during window matching:
+---  * `allowedRoles` (table): Map of allowed window subroles. macOS assigns each window a
+---    "subrole" via the Accessibility API that describes its type. Only windows with roles
+---    in this table pass the default filter. Default allowed roles:
+---    - `AXStandardWindow`: Normal application windows (documents, main windows)
+---    - `AXDialog`: Modal and non-modal dialog boxes (alerts, preferences)
+---    - `AXSystemDialog`: System-level dialogs (authentication prompts, system alerts)
+---    Windows with other roles (e.g., `AXFloatingWindow` for tooltips, `AXSheet` for
+---    attached dialogs) are filtered out unless explicitly allowed in filter rules.
+---
+--- **prefilter** - Early-stage filtering applied before windows are tracked:
+---   PreFilter runs when windows are first detected, before creating watchers. This provides
+---   a performance optimization by avoiding tracking overhead for windows that will never
+---   be needed. Unlike filter rules (which can vary per windowfilter instance), PreFilter
+---   settings apply globally to all instances.
+---
+---  * `ignoreBundleIDs` (table): Map of bundle IDs to ignore. Bundle IDs uniquely identify
+---    macOS applications (e.g., "com.apple.Safari"). Apps with these bundle IDs are never
+---    tracked, even by an "allow all" windowfilter. Default includes:
+---    - `com.apple.WebKit.WebContent`: Safari/WebKit helper processes that render web content.
+---      These appear as separate "apps" but are not user-facing windows.
+---    Add entries with: `hs.window.filter._config.prefilter.ignoreBundleIDs['com.example.app'] = true`
+---  * `ignoreAppPattern` (string, default "^QTKitServer%-"): Lua pattern matched against app
+---    names. Apps whose names match this pattern are ignored. The default pattern filters
+---    QTKitServer processes (legacy QuickTime helper processes). Use Lua pattern syntax:
+---    `^` = start of string, `%-` = literal hyphen (escaped), `$` = end of string.
+---  * `requireTitle` (boolean, default false): If true, windows must have a non-empty title
+---    to be tracked. Useful for filtering out temporary or placeholder windows that apps
+---    create before setting a proper title.
+---  * `requireRole` (boolean, default false): If true, windows must have a non-empty subrole
+---    to be tracked. Some system windows lack roles; enabling this filters them out.
+---  * `minTitleLength` (number, default 0): Minimum title length for windows to be tracked.
+---    Windows with titles shorter than this are ignored. Set to 1 to require any title,
+---    or higher to filter out windows with very short titles.
+---  * `allowedRoles` (table or nil, default nil): If set, only windows with subroles in this
+---    table are tracked. Unlike `filtering.allowedRoles` (which affects matching), this
+---    prevents windows from being tracked at all. When nil, no role-based prefiltering
+---    occurs (all roles are tracked, then filtered during matching).
+---
+--- **skipApps** - Lists of app names to skip (builds `ignoreAlways` and `ignoreInDefaultFilter`):
+---   These lists populate the public `hs.window.filter.ignoreAlways` and
+---   `hs.window.filter.ignoreInDefaultFilter` tables at module load time.
+---
+---  * `noPid` (table): Apps that trigger "No accessibility access" console warnings.
+---    These are typically helper processes or agents that macOS reports as apps but
+---    cannot be queried via Accessibility APIs. Including them here suppresses warnings
+---    and avoids futile tracking attempts.
+---  * `noWindows` (table): Apps that technically exist but have no user-visible windows.
+---    Examples include system agents, background services, and helper processes.
+---    These are always ignored even by "allow all" filters.
+---  * `transient` (table): Apps with transient or ephemeral windows not typically useful
+---    for window management. Examples include Spotlight, Notification Center, and various
+---    menubar apps. These are ignored by the default windowfilter but CAN be included
+---    by custom filters if explicitly allowed.
+---
+--- Notes:
+---  * Changes to `skipApps` lists after module load do NOT affect `ignoreAlways`/
+---    `ignoreInDefaultFilter`. Modify those tables directly instead.
+---  * For most users, the defaults work well. Only tune these if you experience specific
+---    issues with performance, missing windows, or unwanted windows appearing.
+---
+--- Usage:
+--- ```lua
+--- -- Increase retry attempts for slow systems
+--- hs.window.filter._config.timing.maxRetries = 10
+---
+--- -- Ignore a specific app by bundle ID
+--- hs.window.filter._config.prefilter.ignoreBundleIDs['com.example.annoyingapp'] = true
+---
+--- -- Require windows to have titles before tracking
+--- hs.window.filter._config.prefilter.requireTitle = true
+---
+--- -- Add a new app to the always-ignore list (at runtime)
+--- hs.window.filter.ignoreAlways['My Background App'] = true
+--- ```
 local Config = {
-  -- Timing settings (in seconds)
   timing = {
-    retryDelay = 0.2,              -- Delay between registration retries
-    maxRetries = 5,                -- Max attempts to register window/app
-    movedDebounce = 0.5,           -- Debounce for windowMoved events
-    titleDebounce = 0.5,           -- Debounce for titleChanged events
-    spaceChangeDelay = 0.5,        -- Delay after space switch before refresh
-    zombieCleanupInterval = 300,   -- Seconds between zombie app cleanup (5 min)
+    retryDelay = 0.2,
+    maxRetries = 5,
+    movedDebounce = 0.5,
+    titleDebounce = 0.5,
+    spaceChangeDelay = 0.5,
+    zombieCleanupInterval = 300,
   },
 
-  -- Performance settings
   performance = {
-    accessibilityTimeout = 0.5,    -- Max wait for AX response (seconds)
-    skipSlowApps = false,          -- If true, skip apps exceeding timeout
+    accessibilityTimeout = 0.5,
+    skipSlowApps = false,
   },
 
-  -- Default filtering settings (used by FilterRules)
   filtering = {
     allowedRoles = {
       AXStandardWindow = true,
@@ -90,28 +200,24 @@ local Config = {
     },
   },
 
-  -- PreFilter settings (early filtering before tracking)
   prefilter = {
     ignoreBundleIDs = {
-      ['com.apple.WebKit.WebContent'] = true,  -- Browser helper processes
+      ['com.apple.WebKit.WebContent'] = true,
     },
-    ignoreAppPattern = '^QTKitServer%-',       -- Default pattern from original impl
+    ignoreAppPattern = '^QTKitServer%-',
     requireTitle = false,
     requireRole = false,
     minTitleLength = 0,
-    allowedRoles = nil,  -- nil means no role restriction at PreFilter stage
+    allowedRoles = nil,
   },
 
-  -- Apps to skip (these build the public ignoreAlways and ignoreInDefaultFilter tables)
   skipApps = {
-    -- Apps that show console warnings ("No accessibility access to app ...")
     noPid = {
       'universalaccessd', 'sharingd', 'Safari Networking', 'Spotlight Networking',
       'iTunes Helper', 'Safari Web Content', 'App Store Web Content', 'Safari Database Storage',
       'Google Chrome Helper', 'Spotify Helper', 'Todoist Networking', 'Safari Storage',
       'Todoist Database Storage', 'AAM Updates Notifier', 'Slack Helper',
     },
-    -- Apps with no useful windows
     noWindows = {
       'com.apple.internetaccounts', 'CoreServicesUIAgent', 'AirPlayUIAgent',
       'com.apple.security.pboxd', 'PowerChime', 'SystemUIServer', 'Dock',
@@ -123,7 +229,6 @@ local Config = {
       'com.apple.MailServiceAgent', 'Safari Web Content', 'Mail Web Content',
       'Safari Networking', 'nbagent', 'rcd', 'Evernote Helper', 'BTTRelaunch',
     },
-    -- Apps with transient windows (ignored by default filter only)
     transient = {
       'Spotlight', 'Notification Center', 'loginwindow', 'ScreenSaverEngine', 'PressAndHold',
       'PopClip', 'Isolator', 'CheatSheet', 'CornerClickBG', 'Alfred 2', 'Moom', 'CursorSense Manager',
