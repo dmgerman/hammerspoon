@@ -54,12 +54,13 @@ These conventions were decided during implementation and should be followed cons
    - **Internal tests**: `test_window_filter_internals.lua` - Component tests via `_` prefixed exports
    - Tests load `window_filter_new.lua` via dofile
    - Tests verify component behavior and catch regressions
-   - Run tests before marking step complete
+   - **ALWAYS run BOTH test files before marking step complete** - no exceptions
    - Run both test files to ensure no regressions:
      ```bash
      /Users/dmg/bin/osx/hs -c 'dofile(".../test_window_filter.lua")'
      /Users/dmg/bin/osx/hs -c 'dofile(".../test_window_filter_internals.lua")'
      ```
+   - Both must pass before step is considered complete
 
 ---
 
@@ -729,7 +730,7 @@ end)
 
 ---
 
-### Step 6: Tracker (~300 lines)
+### Step 6: Tracker (~300 lines) ✓ COMPLETE
 
 **What to implement:**
 - `Tracker.new(manager)` - Create tracker
@@ -755,7 +756,7 @@ end)
    - `onAppUnhidden(appInfo)`
    - `onFocusChanged(windowInfo, appInfo, prevWindowInfo)`
 
-   ManagerStub implements these as no-ops or logging for Step 6 testing.
+   ManagerStub implements these as event recording for testing.
 
 2. **Simple events only**: Tracker reports raw OS events. It does NOT handle:
    - Event chaining (windowCreated → windowVisible → windowOnScreen)
@@ -764,32 +765,28 @@ end)
 
    Manager (Step 7) handles state transitions and derived events.
 
-3. **Focus state ownership**: Tracker notifies Manager of focus changes via `onFocusChanged()`. Manager owns `focusedWindowId` and `activeAppPid` state.
+3. **Focus state**: Tracker tracks `focusedWindowId` and `focusedAppPid` internally for change detection, notifies Manager via `onFocusChanged()`. Manager will own the authoritative state for filtering context.
 
-4. **Debouncing in Tracker**: Per-window debounce timers for `windowMoved` and `titleChanged`. Timers stored alongside WindowInfo and cancelled on window destruction.
+4. **Debouncing in Tracker**: Per-window debounce timers for `windowMoved` and `titleChanged` (using Config.MOVED_DEBOUNCE and Config.TITLE_DEBOUNCE = 0.5s). Timers stored in `movedTimers`/`titleTimers` tables keyed by windowId and cancelled on window destruction.
 
-5. **WindowInfo updates before notify**: Tracker calls `windowInfo:refresh()` before notifying Manager, ensuring Manager always sees current state.
+5. **WindowInfo updates before notify**: Tracker calls `windowInfo:refresh()` before notifying Manager for move/title events, ensuring Manager always sees current state.
 
-6. **Error handling**: All Manager callbacks wrapped in pcall. Tracker logs errors but doesn't crash if Manager has bugs.
+6. **Error handling**: All Manager callbacks wrapped in pcall via `_notifyManager()`. Tracker logs errors but doesn't crash if Manager has bugs.
 
 7. **Watcher lifecycle**: Careful cleanup on `stop()`:
    - Stop all per-window watchers
    - Stop all per-app watchers
    - Stop app watcher
-   - Cancel all pending retry timers
-   - Cancel all debounce timers
+   - Cancel all pending retry timers (`pendingApps`, `pendingWindows`)
+   - Cancel all debounce timers (`movedTimers`, `titleTimers`)
 
-8. **PreFilter integration**: Uses `PreFilter.shouldTrackApp()` and `PreFilter.shouldTrack()` from Step 4 to decide whether to create watchers.
+8. **PreFilter integration**: Uses `PreFilter.shouldTrackApp()` and `PreFilter.shouldTrack()` from Step 4 to decide whether to create watchers. Config retrieved via `_getPreFilterConfig()` with fallback to `PreFilter.defaultConfig()`.
 
-**Implementation order:**
-1. Basic Tracker structure + ManagerStub
-2. App watcher + app registration/unregistration with retry
-3. Window registration + per-window watchers with retry
-4. Event handlers (raw events to Manager)
-5. Debouncing for moved/titleChanged
-6. Cleanup and zombie detection
+9. **Watcher API usage**: Watcher creation and start must use pcall wrappers (not safeCall) because `app:newWatcher()` and `watcher:start()` don't follow the typical `method(self, ...)` signature pattern.
 
-**Exit criteria:** Tracker correctly manages app/window lifecycle, reports events to ManagerStub
+10. **Test isolation**: Tests avoid calling `tracker:start()` which registers all 100+ running apps. Instead, tests manually set `tracker.running = true` and register individual apps for faster, more reliable testing.
+
+**Exit criteria:** Tracker correctly manages app/window lifecycle, reports events to ManagerStub ✓
 
 ---
 

@@ -1019,10 +1019,691 @@ end
 windowfilter._Subscriptions = Subscriptions
 
 ----------------------------------------------------------------------
--- SECTION 9: PLACEHOLDER FOR FUTURE COMPONENTS
+-- SECTION 9: TRACKER
+----------------------------------------------------------------------
+-- Tracker manages watchers for apps and windows, reporting raw events
+-- to the Manager. It handles:
+-- - App lifecycle (launched, terminated, activated, deactivated, hidden, unhidden)
+-- - Window lifecycle (created, destroyed, moved, minimized, etc.)
+-- - Retry logic for apps/windows that aren't ready yet
+-- - Debouncing for move/title events
+-- - Zombie cleanup
+
+-- UI element watcher event constants (from hs.uielement.watcher)
+local uiwatcher = hs.uielement.watcher
+
+-- Application watcher event constants (from hs.application.watcher)
+local appwatcher = hs.application.watcher
+
+----------------------------------------------------------------------
+-- ManagerStub: Minimal stub for testing Tracker in isolation
+----------------------------------------------------------------------
+-- Implements the Manager interface with logging/counting for tests.
+-- Real Manager (Step 7) will replace this.
+
+local ManagerStub = {}
+ManagerStub.__index = ManagerStub
+
+function ManagerStub.new()
+  local self = setmetatable({}, ManagerStub)
+  self.events = {}  -- List of {event, args} for verification
+  self.preFilter = PreFilter.defaultConfig()
+  return self
+end
+
+function ManagerStub:_record(event, ...)
+  table.insert(self.events, {event = event, args = {...}})
+end
+
+function ManagerStub:onWindowCreated(windowInfo, appInfo)
+  self:_record('windowCreated', windowInfo, appInfo)
+end
+
+function ManagerStub:onWindowDestroyed(windowInfo, appInfo)
+  self:_record('windowDestroyed', windowInfo, appInfo)
+end
+
+function ManagerStub:onWindowMoved(windowInfo, appInfo)
+  self:_record('windowMoved', windowInfo, appInfo)
+end
+
+function ManagerStub:onWindowMinimized(windowInfo, appInfo)
+  self:_record('windowMinimized', windowInfo, appInfo)
+end
+
+function ManagerStub:onWindowUnminimized(windowInfo, appInfo)
+  self:_record('windowUnminimized', windowInfo, appInfo)
+end
+
+function ManagerStub:onWindowTitleChanged(windowInfo, appInfo)
+  self:_record('windowTitleChanged', windowInfo, appInfo)
+end
+
+function ManagerStub:onAppActivated(appInfo)
+  self:_record('appActivated', appInfo)
+end
+
+function ManagerStub:onAppDeactivated(appInfo)
+  self:_record('appDeactivated', appInfo)
+end
+
+function ManagerStub:onAppHidden(appInfo)
+  self:_record('appHidden', appInfo)
+end
+
+function ManagerStub:onAppUnhidden(appInfo)
+  self:_record('appUnhidden', appInfo)
+end
+
+function ManagerStub:onFocusChanged(windowInfo, appInfo, prevWindowInfo)
+  self:_record('focusChanged', windowInfo, appInfo, prevWindowInfo)
+end
+
+function ManagerStub:getEventCount(eventName)
+  local count = 0
+  for _, e in ipairs(self.events) do
+    if e.event == eventName then count = count + 1 end
+  end
+  return count
+end
+
+function ManagerStub:getLastEvent(eventName)
+  for i = #self.events, 1, -1 do
+    if self.events[i].event == eventName then
+      return self.events[i]
+    end
+  end
+  return nil
+end
+
+function ManagerStub:clearEvents()
+  self.events = {}
+end
+
+-- Expose for testing
+windowfilter._ManagerStub = ManagerStub
+
+----------------------------------------------------------------------
+-- Tracker: Manages watchers and reports events to Manager
+----------------------------------------------------------------------
+
+local Tracker = {}
+Tracker.__index = Tracker
+
+--- Create a new Tracker.
+--- @param manager table Object implementing Manager interface
+--- @return table Tracker instance
+function Tracker.new(manager)
+  local self = setmetatable({}, Tracker)
+
+  self.manager = manager
+  self.apps = {}              -- pid -> AppInfo
+  self.appWatcher = nil       -- hs.application.watcher
+  self.pendingApps = {}       -- pid -> {timer, retryCount}
+  self.pendingWindows = {}    -- window userdata -> {timer, retryCount, appInfo}
+  self.movedTimers = {}       -- windowId -> timer (debounce)
+  self.titleTimers = {}       -- windowId -> timer (debounce)
+  self.running = false
+  self.focusedWindowId = nil  -- Track for focus change detection
+  self.focusedAppPid = nil
+
+  return self
+end
+
+--- Start tracking apps and windows.
+function Tracker:start()
+  if self.running then return end
+  self.running = true
+
+  -- Create app watcher
+  self.appWatcher = hs.application.watcher.new(function(name, event, app)
+    self:_onAppEvent(name, event, app)
+  end)
+
+  -- Register existing apps
+  local runningApps = hs.application.runningApplications()
+  for _, app in ipairs(runningApps) do
+    self:registerApp(app)
+  end
+
+  -- Start watching for new apps
+  self.appWatcher:start()
+
+  print('[wfilter] Tracker started')
+end
+
+--- Stop tracking and clean up all watchers.
+function Tracker:stop()
+  if not self.running then return end
+  self.running = false
+
+  -- Stop app watcher
+  if self.appWatcher then
+    self.appWatcher:stop()
+    self.appWatcher = nil
+  end
+
+  -- Unregister all apps (stops their watchers)
+  for pid, _ in pairs(self.apps) do
+    self:unregisterApp(pid)
+  end
+
+  -- Cancel pending app timers
+  for pid, pending in pairs(self.pendingApps) do
+    if pending.timer then pending.timer:stop() end
+  end
+  self.pendingApps = {}
+
+  -- Cancel pending window timers
+  for win, pending in pairs(self.pendingWindows) do
+    if pending.timer then pending.timer:stop() end
+  end
+  self.pendingWindows = {}
+
+  -- Cancel debounce timers
+  for id, timer in pairs(self.movedTimers) do
+    timer:stop()
+  end
+  self.movedTimers = {}
+
+  for id, timer in pairs(self.titleTimers) do
+    timer:stop()
+  end
+  self.titleTimers = {}
+
+  self.focusedWindowId = nil
+  self.focusedAppPid = nil
+
+  print('[wfilter] Tracker stopped')
+end
+
+--- Get preFilter config from manager or use default.
+--- @return table PreFilter config
+function Tracker:_getPreFilterConfig()
+  if self.manager and self.manager.preFilter then
+    return self.manager.preFilter
+  end
+  return PreFilter.defaultConfig()
+end
+
+--- Safely call a Manager callback, catching errors.
+--- @param method string Method name
+--- @param ... any Arguments to pass
+function Tracker:_notifyManager(method, ...)
+  if not self.manager then return end
+  local fn = self.manager[method]
+  if not fn then return end
+
+  local ok, err = pcall(fn, self.manager, ...)
+  if not ok then
+    print(sformat('[wfilter] Manager.%s error: %s', method, tostring(err)))
+  end
+end
+
+--- Register an app for tracking.
+--- @param hsApp userdata The hs.application object
+--- @param retryCount number Optional retry count
+function Tracker:registerApp(hsApp, retryCount)
+  if not self.running then return end
+  if not hsApp then return end
+
+  local pid = safeCall(hsApp.pid, hsApp)
+  if not pid then return end
+
+  -- Already registered?
+  if self.apps[pid] then return end
+
+  -- Cancel any pending retry for this app
+  if self.pendingApps[pid] then
+    if self.pendingApps[pid].timer then
+      self.pendingApps[pid].timer:stop()
+    end
+    self.pendingApps[pid] = nil
+  end
+
+  -- PreFilter check
+  local config = self:_getPreFilterConfig()
+  local shouldTrack, reason = PreFilter.shouldTrackApp(hsApp, config)
+  if not shouldTrack then
+    return
+  end
+
+  retryCount = (retryCount or 0) + 1
+
+  -- Check if app is ready (can get focused window)
+  -- Some apps take time to initialize their accessibility features
+  local fw = safeCall(hsApp.focusedWindow, hsApp)
+
+  if fw or retryCount > Config.MAX_RETRIES then
+    -- Create AppInfo
+    local appInfo = AppInfo.new(hsApp, pid)
+    if not appInfo then return end
+
+    self.apps[pid] = appInfo
+
+    -- Create watcher for this app's UI events
+    -- Note: watcher APIs must be called directly, not through safeCall
+    local ok, watcher = pcall(function()
+      return hsApp:newWatcher(function(element, event, watcherObj, name)
+        self:_onAppUIEvent(element, event, pid, name)
+      end)
+    end)
+
+    if ok and watcher then
+      appInfo.watcher = watcher
+      -- Watch for new windows and focus changes
+      local startOk = pcall(function()
+        watcher:start({
+          uiwatcher.windowCreated,
+          uiwatcher.focusedWindowChanged,
+        })
+      end)
+      if not startOk then
+        print(sformat('[wfilter] Failed to start watcher for %s', appInfo.name))
+      end
+    end
+
+    -- Register existing windows
+    self:_registerAppWindows(appInfo)
+
+  else
+    -- App not ready, retry later
+    local delay = retryCount * Config.RETRY_DELAY
+    self.pendingApps[pid] = {
+      retryCount = retryCount,
+      timer = hs.timer.doAfter(delay, function()
+        self.pendingApps[pid] = nil
+        self:registerApp(hsApp, retryCount)
+      end)
+    }
+  end
+end
+
+--- Register all windows for an app.
+--- @param appInfo table AppInfo object
+function Tracker:_registerAppWindows(appInfo)
+  if not appInfo or not appInfo._app then return end
+
+  local windows = safeCall(appInfo._app.allWindows, appInfo._app)
+  if not windows then return end
+
+  for _, hsWindow in ipairs(windows) do
+    self:registerWindow(hsWindow, appInfo)
+  end
+end
+
+--- Register a window for tracking.
+--- @param hsWindow userdata The hs.window object
+--- @param appInfo table The AppInfo for this window's app
+--- @param retryCount number Optional retry count
+function Tracker:registerWindow(hsWindow, appInfo, retryCount)
+  if not self.running then return end
+  if not hsWindow or not appInfo then return end
+
+  local id = safeCall(hsWindow.id, hsWindow)
+
+  if not id then
+    -- Window doesn't have ID yet, retry later
+    retryCount = (retryCount or 0) + 1
+    if retryCount <= Config.MAX_RETRIES then
+      local delay = retryCount * Config.RETRY_DELAY
+      self.pendingWindows[hsWindow] = {
+        retryCount = retryCount,
+        appInfo = appInfo,
+        timer = hs.timer.doAfter(delay, function()
+          self.pendingWindows[hsWindow] = nil
+          self:registerWindow(hsWindow, appInfo, retryCount)
+        end)
+      }
+    end
+    return
+  end
+
+  -- Cancel any pending retry
+  if self.pendingWindows[hsWindow] then
+    if self.pendingWindows[hsWindow].timer then
+      self.pendingWindows[hsWindow].timer:stop()
+    end
+    self.pendingWindows[hsWindow] = nil
+  end
+
+  -- Already registered?
+  if appInfo.windows[id] then return end
+
+  -- PreFilter check
+  local config = self:_getPreFilterConfig()
+  local shouldTrack, reason = PreFilter.shouldTrack(hsWindow, appInfo._app, config)
+  if not shouldTrack then
+    return
+  end
+
+  -- Create WindowInfo
+  local windowInfo = WindowInfo.new(hsWindow)
+  if not windowInfo then return end
+
+  -- Set app reference
+  windowInfo.appName = appInfo.name
+  windowInfo.appPid = appInfo.pid
+
+  -- Create watcher for this window's UI events
+  -- Note: watcher APIs must be called directly, not through safeCall
+  local ok, watcher = pcall(function()
+    return hsWindow:newWatcher(function(element, event, watcherObj, name)
+      self:_onWindowEvent(event, appInfo.pid, id)
+    end)
+  end)
+
+  if ok and watcher then
+    windowInfo.watcher = watcher
+    local startOk = pcall(function()
+      watcher:start({
+        uiwatcher.elementDestroyed,
+        uiwatcher.windowMoved,
+        uiwatcher.windowResized,
+        uiwatcher.windowMinimized,
+        uiwatcher.windowUnminimized,
+        uiwatcher.titleChanged,
+      })
+    end)
+    if not startOk then
+      print(sformat('[wfilter] Failed to start window watcher for %s (%d)', appInfo.name, id))
+    end
+  end
+
+  -- Store window
+  appInfo.windows[id] = windowInfo
+
+  -- Notify manager
+  self:_notifyManager('onWindowCreated', windowInfo, appInfo)
+end
+
+--- Unregister a window.
+--- @param windowInfo table WindowInfo object
+--- @param appInfo table AppInfo object
+function Tracker:unregisterWindow(windowInfo, appInfo)
+  if not windowInfo or not appInfo then return end
+
+  local id = windowInfo.id
+
+  -- Stop window watcher
+  if windowInfo.watcher then
+    safeCall(windowInfo.watcher.stop, windowInfo.watcher)
+    windowInfo.watcher = nil
+  end
+
+  -- Cancel debounce timers for this window
+  if self.movedTimers[id] then
+    self.movedTimers[id]:stop()
+    self.movedTimers[id] = nil
+  end
+  if self.titleTimers[id] then
+    self.titleTimers[id]:stop()
+    self.titleTimers[id] = nil
+  end
+
+  -- Remove from app
+  appInfo.windows[id] = nil
+
+  -- Clear focus if this was focused
+  if self.focusedWindowId == id then
+    self.focusedWindowId = nil
+  end
+
+  -- Notify manager
+  self:_notifyManager('onWindowDestroyed', windowInfo, appInfo)
+end
+
+--- Unregister an app and all its windows.
+--- @param pid number Process ID
+function Tracker:unregisterApp(pid)
+  local appInfo = self.apps[pid]
+  if not appInfo then return end
+
+  -- Unregister all windows first
+  for id, windowInfo in pairs(appInfo.windows) do
+    self:unregisterWindow(windowInfo, appInfo)
+  end
+
+  -- Stop app watcher
+  if appInfo.watcher then
+    safeCall(appInfo.watcher.stop, appInfo.watcher)
+    appInfo.watcher = nil
+  end
+
+  -- Remove from tracked apps
+  self.apps[pid] = nil
+
+  -- Clear focus if this was the focused app
+  if self.focusedAppPid == pid then
+    self.focusedAppPid = nil
+  end
+end
+
+--- Handle app watcher events.
+--- @param name string App name
+--- @param event number Event type
+--- @param hsApp userdata hs.application object
+function Tracker:_onAppEvent(name, event, hsApp)
+  if not self.running then return end
+  if not name then return end
+
+  local pid = hsApp and safeCall(hsApp.pid, hsApp)
+
+  if event == appwatcher.launched then
+    self:registerApp(hsApp)
+
+  elseif event == appwatcher.terminated then
+    if pid then
+      -- Cancel any pending retry
+      if self.pendingApps[pid] then
+        if self.pendingApps[pid].timer then
+          self.pendingApps[pid].timer:stop()
+        end
+        self.pendingApps[pid] = nil
+      end
+      self:unregisterApp(pid)
+    end
+
+  elseif event == appwatcher.activated then
+    if pid then
+      local appInfo = self.apps[pid]
+      if appInfo then
+        local prevPid = self.focusedAppPid
+        self.focusedAppPid = pid
+        appInfo:refresh()
+        self:_notifyManager('onAppActivated', appInfo)
+      else
+        -- App activated but not registered yet, register it
+        self:registerApp(hsApp)
+      end
+    end
+
+  elseif event == appwatcher.deactivated then
+    if pid then
+      local appInfo = self.apps[pid]
+      if appInfo then
+        appInfo:refresh()
+        self:_notifyManager('onAppDeactivated', appInfo)
+      end
+    end
+
+  elseif event == appwatcher.hidden then
+    if pid then
+      local appInfo = self.apps[pid]
+      if appInfo then
+        appInfo.isHidden = true
+        self:_notifyManager('onAppHidden', appInfo)
+      end
+    end
+
+  elseif event == appwatcher.unhidden then
+    if pid then
+      local appInfo = self.apps[pid]
+      if appInfo then
+        appInfo.isHidden = false
+        self:_notifyManager('onAppUnhidden', appInfo)
+      end
+    end
+  end
+end
+
+--- Handle per-app UI events (windowCreated, focusedWindowChanged).
+--- @param element userdata UI element
+--- @param event number Event type
+--- @param pid number Process ID
+--- @param name string App name
+function Tracker:_onAppUIEvent(element, event, pid, name)
+  if not self.running then return end
+
+  local appInfo = self.apps[pid]
+  if not appInfo then return end
+
+  if event == uiwatcher.windowCreated then
+    -- element is the new window
+    if element then
+      self:registerWindow(element, appInfo)
+    end
+
+  elseif event == uiwatcher.focusedWindowChanged then
+    -- element is the newly focused window
+    if element then
+      local id = safeCall(element.id, element)
+      if id and id ~= self.focusedWindowId then
+        local prevWindowInfo = nil
+        if self.focusedWindowId then
+          -- Find previous focused window
+          for _, info in pairs(appInfo.windows) do
+            if info.id == self.focusedWindowId then
+              prevWindowInfo = info
+              break
+            end
+          end
+        end
+
+        self.focusedWindowId = id
+
+        -- Get or create WindowInfo for the focused window
+        local windowInfo = appInfo.windows[id]
+        if not windowInfo then
+          -- Window not registered yet, register it
+          self:registerWindow(element, appInfo)
+          windowInfo = appInfo.windows[id]
+        end
+
+        if windowInfo then
+          windowInfo.timeFocused = hs.timer.absoluteTime()
+          self:_notifyManager('onFocusChanged', windowInfo, appInfo, prevWindowInfo)
+        end
+      end
+    end
+  end
+end
+
+--- Handle per-window UI events.
+--- @param event number Event type
+--- @param pid number Process ID
+--- @param windowId number Window ID
+function Tracker:_onWindowEvent(event, pid, windowId)
+  if not self.running then return end
+
+  local appInfo = self.apps[pid]
+  if not appInfo then return end
+
+  local windowInfo = appInfo.windows[windowId]
+  if not windowInfo then return end
+
+  if event == uiwatcher.elementDestroyed then
+    self:unregisterWindow(windowInfo, appInfo)
+
+  elseif event == uiwatcher.windowMoved or event == uiwatcher.windowResized then
+    -- Debounce move/resize events
+    if self.movedTimers[windowId] then
+      self.movedTimers[windowId]:stop()
+    end
+    self.movedTimers[windowId] = hs.timer.doAfter(Config.MOVED_DEBOUNCE, function()
+      self.movedTimers[windowId] = nil
+      if not self.running then return end
+      if not appInfo.windows[windowId] then return end
+
+      -- Refresh and notify
+      windowInfo:refresh()
+      self:_notifyManager('onWindowMoved', windowInfo, appInfo)
+    end)
+
+  elseif event == uiwatcher.windowMinimized then
+    windowInfo.isMinimized = true
+    windowInfo.isVisible = false
+    self:_notifyManager('onWindowMinimized', windowInfo, appInfo)
+
+  elseif event == uiwatcher.windowUnminimized then
+    windowInfo.isMinimized = false
+    windowInfo:refresh()  -- Get current visibility
+    self:_notifyManager('onWindowUnminimized', windowInfo, appInfo)
+
+  elseif event == uiwatcher.titleChanged then
+    -- Debounce title change events
+    if self.titleTimers[windowId] then
+      self.titleTimers[windowId]:stop()
+    end
+    self.titleTimers[windowId] = hs.timer.doAfter(Config.TITLE_DEBOUNCE, function()
+      self.titleTimers[windowId] = nil
+      if not self.running then return end
+      if not appInfo.windows[windowId] then return end
+
+      -- Refresh and notify
+      local oldTitle = windowInfo.title
+      windowInfo:refresh()
+      if windowInfo.title ~= oldTitle then
+        self:_notifyManager('onWindowTitleChanged', windowInfo, appInfo)
+      end
+    end)
+  end
+end
+
+--- Clean up zombie apps (apps that terminated without notification).
+function Tracker:cleanupZombies()
+  if not self.running then return end
+
+  for pid, appInfo in pairs(self.apps) do
+    local app = hs.application.applicationForPID(pid)
+    if not app then
+      print(sformat('[wfilter] Cleaning up zombie app: %s (%d)', appInfo.name, pid))
+      self:unregisterApp(pid)
+    end
+  end
+end
+
+--- Get count of tracked apps.
+--- @return number
+function Tracker:getAppCount()
+  local count = 0
+  for _ in pairs(self.apps) do count = count + 1 end
+  return count
+end
+
+--- Get count of tracked windows.
+--- @return number
+function Tracker:getWindowCount()
+  local count = 0
+  for _, appInfo in pairs(self.apps) do
+    for _ in pairs(appInfo.windows) do count = count + 1 end
+  end
+  return count
+end
+
+--- String representation for debugging.
+function Tracker:__tostring()
+  return sformat('Tracker: %d apps, %d windows, running=%s',
+    self:getAppCount(), self:getWindowCount(), tostring(self.running))
+end
+
+-- Expose for testing
+windowfilter._Tracker = Tracker
+
+----------------------------------------------------------------------
+-- SECTION 10: PLACEHOLDER FOR FUTURE COMPONENTS
 ----------------------------------------------------------------------
 -- Components will be added in subsequent steps:
--- Step 6: Tracker
 -- Step 7: Manager
 -- Step 8: WindowFilter class (public API)
 -- Step 9: Default filters, module functions

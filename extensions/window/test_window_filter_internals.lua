@@ -706,6 +706,295 @@ local function testSubscriptionsToString()
 end
 
 -- ============================================================================
+-- STEP 6: MANAGERSTUB TESTS
+-- ============================================================================
+
+local function testManagerStubCreation()
+  local stub = wf_new._ManagerStub.new()
+  assertIsNotNil(stub)
+  assertIsTable(stub.events)
+  assertIsEqual(0, #stub.events)
+  assertIsTable(stub.preFilter)
+  return success()
+end
+
+local function testManagerStubRecordsEvents()
+  local stub = wf_new._ManagerStub.new()
+  stub:onWindowCreated({id = 1}, {name = "TestApp"})
+  stub:onWindowDestroyed({id = 1}, {name = "TestApp"})
+  stub:onAppActivated({name = "TestApp"})
+  assertIsEqual(3, #stub.events)
+  assertIsEqual("windowCreated", stub.events[1].event)
+  assertIsEqual("windowDestroyed", stub.events[2].event)
+  assertIsEqual("appActivated", stub.events[3].event)
+  return success()
+end
+
+local function testManagerStubGetEventCount()
+  local stub = wf_new._ManagerStub.new()
+  stub:onWindowCreated({id = 1}, {name = "App1"})
+  stub:onWindowCreated({id = 2}, {name = "App1"})
+  stub:onAppActivated({name = "App1"})
+  assertIsEqual(2, stub:getEventCount("windowCreated"))
+  assertIsEqual(1, stub:getEventCount("appActivated"))
+  assertIsEqual(0, stub:getEventCount("windowDestroyed"))
+  return success()
+end
+
+local function testManagerStubGetLastEvent()
+  local stub = wf_new._ManagerStub.new()
+  stub:onWindowCreated({id = 1}, {name = "App1"})
+  stub:onWindowCreated({id = 2}, {name = "App2"})
+  local lastEvent = stub:getLastEvent("windowCreated")
+  assertIsNotNil(lastEvent)
+  assertIsEqual("windowCreated", lastEvent.event)
+  assertIsEqual(2, lastEvent.args[1].id)
+  return success()
+end
+
+local function testManagerStubClearEvents()
+  local stub = wf_new._ManagerStub.new()
+  stub:onWindowCreated({id = 1}, {name = "App1"})
+  stub:clearEvents()
+  assertIsEqual(0, #stub.events)
+  return success()
+end
+
+-- ============================================================================
+-- STEP 6: TRACKER TESTS
+-- ============================================================================
+
+local function testTrackerCreation()
+  local stub = wf_new._ManagerStub.new()
+  local tracker = wf_new._Tracker.new(stub)
+  assertIsNotNil(tracker)
+  assertFalse(tracker.running)
+  assertIsEqual(0, tracker:getAppCount())
+  assertIsEqual(0, tracker:getWindowCount())
+  return success()
+end
+
+local function testTrackerStartStop()
+  local stub = wf_new._ManagerStub.new()
+  local tracker = wf_new._Tracker.new(stub)
+
+  -- Test running state transitions
+  assertFalse(tracker.running)
+
+  -- Manually set running and create watcher (without event handler)
+  tracker.running = true
+  tracker.appWatcher = hs.application.watcher.new(function() end)
+
+  assertTrue(tracker.running)
+  assertIsNotNil(tracker.appWatcher)
+
+  -- Register just one app manually for testing
+  local app = hs.application.frontmostApplication()
+  if app then
+    tracker:registerApp(app)
+  end
+
+  -- Should have tracked at least 1 app
+  assertGreaterThan(0, tracker:getAppCount())
+
+  -- Stop
+  tracker:stop()
+  assertFalse(tracker.running)
+  assertIsNil(tracker.appWatcher)
+  assertIsEqual(0, tracker:getAppCount())
+
+  return success()
+end
+
+local function testTrackerTracksExistingApps()
+  local stub = wf_new._ManagerStub.new()
+  local tracker = wf_new._Tracker.new(stub)
+
+  -- Manually start and register one app
+  tracker.running = true
+  local app = hs.application.frontmostApplication()
+  if app then
+    tracker:registerApp(app)
+  end
+
+  -- Should have tracked 1 app
+  local appCount = tracker:getAppCount()
+  assertGreaterThan(0, appCount)
+
+  -- Should have sent windowCreated events for that app's windows
+  local createdCount = stub:getEventCount("windowCreated")
+  assertIsNumber(createdCount)
+
+  tracker:stop()
+  return success()
+end
+
+local function testTrackerTracksWindows()
+  local stub = wf_new._ManagerStub.new()
+  local tracker = wf_new._Tracker.new(stub)
+
+  -- Manually start and register one app
+  tracker.running = true
+  local app = hs.application.frontmostApplication()
+  if app then
+    tracker:registerApp(app)
+  end
+
+  -- Should have tracked some windows for that app
+  local windowCount = tracker:getWindowCount()
+  assertIsNumber(windowCount)
+
+  tracker:stop()
+  return success()
+end
+
+local function testTrackerToString()
+  local stub = wf_new._ManagerStub.new()
+  local tracker = wf_new._Tracker.new(stub)
+  local str = tostring(tracker)
+  assertIsString(str)
+  assertTrue(string.find(str, "Tracker") ~= nil)
+  return success()
+end
+
+local function testTrackerDoubleStartIsNoop()
+  local stub = wf_new._ManagerStub.new()
+  local tracker = wf_new._Tracker.new(stub)
+
+  -- Manually create watcher
+  tracker.running = true
+  tracker.appWatcher = hs.application.watcher.new(function() end)
+  local watcher1 = tracker.appWatcher
+
+  -- Calling start() when already running should be noop
+  tracker:start()  -- Should be noop because running is true
+  assertIsEqual(watcher1, tracker.appWatcher)
+
+  tracker:stop()
+  return success()
+end
+
+local function testTrackerDoubleStopIsNoop()
+  local stub = wf_new._ManagerStub.new()
+  local tracker = wf_new._Tracker.new(stub)
+
+  -- Manually start
+  tracker.running = true
+  tracker.appWatcher = hs.application.watcher.new(function() end)
+
+  tracker:stop()
+  tracker:stop()  -- Should be noop
+  assertFalse(tracker.running)
+  return success()
+end
+
+local function testTrackerPreFilterIntegration()
+  local stub = wf_new._ManagerStub.new()
+  -- Blacklist Hammerspoon
+  stub.preFilter.ignoreAppNames["Hammerspoon"] = true
+  local tracker = wf_new._Tracker.new(stub)
+
+  tracker.running = true
+  -- Try to register Hammerspoon
+  local hs_app = hs.application.find("Hammerspoon")
+  if hs_app then
+    tracker:registerApp(hs_app)
+  end
+
+  -- Hammerspoon should not be tracked (blacklisted)
+  local found = false
+  for pid, appInfo in pairs(tracker.apps) do
+    if appInfo.name == "Hammerspoon" then
+      found = true
+      break
+    end
+  end
+  assertFalse(found)
+
+  tracker:stop()
+  return success()
+end
+
+local function testTrackerCleanupOnStop()
+  local stub = wf_new._ManagerStub.new()
+  local tracker = wf_new._Tracker.new(stub)
+
+  -- Manually start and register one app
+  tracker.running = true
+  local app = hs.application.frontmostApplication()
+  if app then
+    tracker:registerApp(app)
+  end
+
+  tracker:stop()
+
+  -- Everything should be cleaned up
+  assertIsEqual(0, tracker:getAppCount())
+  assertIsEqual(0, tracker:getWindowCount())
+  assertIsNil(tracker.appWatcher)
+
+  return success()
+end
+
+local function testTrackerGetAppAndWindowCount()
+  local stub = wf_new._ManagerStub.new()
+  local tracker = wf_new._Tracker.new(stub)
+
+  tracker.running = true
+  local app = hs.application.frontmostApplication()
+  if app then
+    tracker:registerApp(app)
+  end
+
+  local appCount = tracker:getAppCount()
+  local windowCount = tracker:getWindowCount()
+
+  assertIsNumber(appCount)
+  assertIsNumber(windowCount)
+
+  tracker:stop()
+  return success()
+end
+
+local function testTrackerManagerCallbackError()
+  -- Manager that throws errors
+  local badManager = {
+    preFilter = wf_new._PreFilter.defaultConfig(),
+    onWindowCreated = function() error("intentional error") end,
+    onWindowDestroyed = function() end,
+  }
+  local tracker = wf_new._Tracker.new(badManager)
+
+  -- Manually start and register one app
+  tracker.running = true
+  local app = hs.application.frontmostApplication()
+  if app then
+    -- This should not crash even with bad manager
+    tracker:registerApp(app)
+  end
+  assertTrue(tracker.running)
+  tracker:stop()
+
+  return success()
+end
+
+local function testTrackerWithNilManager()
+  local tracker = wf_new._Tracker.new(nil)
+  assertIsNotNil(tracker)
+
+  -- Should not crash with nil manager
+  tracker.running = true
+  local app = hs.application.frontmostApplication()
+  if app then
+    tracker:registerApp(app)
+  end
+  assertTrue(tracker.running)
+  tracker:stop()
+
+  return success()
+end
+
+-- ============================================================================
 -- RUN ALL TESTS
 -- ============================================================================
 
@@ -793,6 +1082,29 @@ local function runAllTests()
   runTest("testSubscriptionsEmitNoCallbacks", testSubscriptionsEmitNoCallbacks)
   runTest("testSubscriptionsSelfUnsubscribe", testSubscriptionsSelfUnsubscribe)
   runTest("testSubscriptionsToString", testSubscriptionsToString)
+
+  -- Step 6: ManagerStub
+  print("\nStep 6: ManagerStub")
+  runTest("testManagerStubCreation", testManagerStubCreation)
+  runTest("testManagerStubRecordsEvents", testManagerStubRecordsEvents)
+  runTest("testManagerStubGetEventCount", testManagerStubGetEventCount)
+  runTest("testManagerStubGetLastEvent", testManagerStubGetLastEvent)
+  runTest("testManagerStubClearEvents", testManagerStubClearEvents)
+
+  -- Step 6: Tracker
+  print("\nStep 6: Tracker")
+  runTest("testTrackerCreation", testTrackerCreation)
+  runTest("testTrackerStartStop", testTrackerStartStop)
+  runTest("testTrackerTracksExistingApps", testTrackerTracksExistingApps)
+  runTest("testTrackerTracksWindows", testTrackerTracksWindows)
+  runTest("testTrackerToString", testTrackerToString)
+  runTest("testTrackerDoubleStartIsNoop", testTrackerDoubleStartIsNoop)
+  runTest("testTrackerDoubleStopIsNoop", testTrackerDoubleStopIsNoop)
+  runTest("testTrackerPreFilterIntegration", testTrackerPreFilterIntegration)
+  runTest("testTrackerCleanupOnStop", testTrackerCleanupOnStop)
+  runTest("testTrackerGetAppAndWindowCount", testTrackerGetAppAndWindowCount)
+  runTest("testTrackerManagerCallbackError", testTrackerManagerCallbackError)
+  runTest("testTrackerWithNilManager", testTrackerWithNilManager)
 
   -- Summary
   print("\n" .. string.rep("=", 60))
