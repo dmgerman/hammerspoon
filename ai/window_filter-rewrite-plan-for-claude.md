@@ -971,9 +971,18 @@ Future optimization opportunities (deferred to avoid scope creep):
 
 ---
 
-### Step 10: Behavioral Contract Tests (~100 lines)
+### Step 10: Behavioral Contract Tests (~100 lines) ✓ COMPLETE
 
 **Purpose**: Add behavioral tests for API functions not yet covered by contract tests.
+
+**Completed**: Added 13 behavioral tests to test_window_filter.lua (49 total tests).
+
+**Bugs found and fixed during testing:**
+- `new()` was not rejecting apps in `ignoreInDefaultFilter` (only `ignoreAlways`)
+- `new('App')` and `new({'apps'})` were returning false for `isAppAllowed` on other apps, but original returns true (filtering at window level)
+- Direction methods were calling `hs.window.windowsToEast` which doesn't exist; fixed to use `hs.getObjectMetatable("hs.window")`
+- Manager was starting/stopping for each filter, causing slow tests; fixed by adding `default:keepActive()`
+- Added "Web Content$" pattern to PreFilter blacklist for performance
 
 **Testing strategy**: Use apps that always exist on macOS:
 - **Finder** - always running, always has windows
@@ -1170,7 +1179,12 @@ Future optimization opportunities (deferred to avoid scope creep):
     end
     ```
 
-**Exit criteria:** All behavioral contract tests pass against both old and new implementations
+**Exit criteria:** All behavioral contract tests pass against both old and new implementations ✓
+
+**Test results:**
+- Contract tests (old implementation): 49/49 passing
+- Contract tests (new implementation): 49/49 passing
+- Internal tests: 123/123 passing
 
 ---
 

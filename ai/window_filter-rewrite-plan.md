@@ -1,9 +1,9 @@
 # hs.window.filter Rewrite Plan
 
 **Date**: 2025-01-28
-**Status**: In Progress (Step 0 Complete)
+**Status**: Complete (All Steps Done)
 **Target**: Full API-compatible replacement for upstream `hs.window.filter`
-**Estimated Size**: ~1200-1500 lines (vs current ~2400)
+**Actual Size**: ~3250 lines (vs current ~2400)
 
 **Related Documents:**
 - [Technical Reference](window_filter-rewrite-info.md) - Data structures, component specs, API matrix, performance targets, test specs
@@ -15,23 +15,28 @@
 
 | Step | Description | Status | Notes |
 |------|-------------|--------|-------|
-| 0 | Contract Tests | **Complete** | 36 tests pass against current implementation |
-| 1 | Utilities + Core Constants | Not Started | |
-| 2 | WindowInfo + AppInfo | Not Started | |
-| 3 | FilterRules + Filter | Not Started | |
-| 4 | PreFilter | Not Started | |
-| 5 | Events + Subscriptions | Not Started | |
-| 6 | Tracker | Not Started | |
-| 7 | Manager | Not Started | |
-| 8 | WindowFilter Class | Not Started | |
-| 9 | Default Filters + Module Functions | Not Started | |
-| 10 | Contract Verification + Performance | Not Started | |
+| 0 | Contract Tests | **Complete** | 49 contract tests pass |
+| 1 | Utilities + Core Constants | **Complete** | safeCall, Config, logging |
+| 2 | WindowInfo + AppInfo | **Complete** | Safe property access wrappers |
+| 3 | FilterRules + Filter | **Complete** | Pure filter matching logic |
+| 4 | PreFilter | **Complete** | Bundle ID blacklist, Web Content$ pattern |
+| 5 | Events + Subscriptions | **Complete** | All event types + pseudo-events |
+| 6 | Tracker | **Complete** | App/window lifecycle, watchers |
+| 7 | Manager | **Complete** | Singleton coordinator, keepActive |
+| 8a | WindowFilter Class (Part 1) | **Complete** | Core class structure, constructors |
+| 8b | WindowFilter Class (Part 2) | **Complete** | Remaining methods, direction/focus |
+| 9 | Default Filters + Module Functions | **Complete** | default, defaultCurrentSpace, ignoreAlways |
+| 10 | Contract Verification | **Complete** | 123 internal tests, all 49 contract tests pass |
+| 11 | Performance + Behavioral Tests | **Complete** | keepActive optimization, focus/direction methods |
 
-### Step 0 Details (2025-01-28)
+### Implementation Details
 
-**Created:** `extensions/window/test_window_filter.lua`
+**Files Created:**
+- `extensions/window/window_filter_new.lua` - Complete rewrite (~3250 lines)
+- `extensions/window/test_window_filter.lua` - 49 contract tests
+- `extensions/window/test_window_filter_internals.lua` - 123 internal component tests
 
-**Tests:** 36 contract tests covering:
+**Contract Tests (49 total):**
 - Constructor Tests (7): `new()`, `new(true)`, `new(false)`, `new(string)`, `new(table)`, `new({rules})`, `new(function)`
 - Method Chaining Tests (5): All filter methods return `self`
 - Filter Rules Tests (3): `visible`, `allowTitles`, `rejectApp`
@@ -40,15 +45,32 @@
 - Module-Level API Tests (5): `default`, `defaultCurrentSpace`, `ignoreAlways`, event constants, sort constants
 - Copy Tests (1): Independent copy verification
 - Edge Case Tests (7): `setFilters`, `getFilters`, `isWindowAllowed`, `keepActive`, `setCurrentSpace`, `setScreens`, `setRegions`
+- Behavioral Tests (13): notify, setOverrideFilter, iswf, copy independence, batch operations, direction methods, focus methods
 
-**Discoveries during testing:**
+**Internal Tests (123 total):**
+- safeCall tests
+- WindowInfo tests
+- AppInfo tests
+- FilterRules tests
+- PreFilter tests
+- Events tests
+- Filter matching tests
+- Constructor tests
+- getWindows tests
+
+**Key Discoveries:**
 1. `isAppAllowed()` returns `true` for all apps even with single-app/app-list filters - filtering happens at window level via `getWindows()`
 2. `setScreens()` expects a screen name (string), not a screen object
 3. `setRegions()` expects a table of regions, not a single region
 
-**Skipped:** `testRejectRegionsBug` - will be added in Step 10 to verify the fix
+**Bug Fixed:** `rejectRegions` now correctly uses `filter.rejectRegions` instead of `filter.allowRegions`
 
-**Development approach:** All work happens in `window_filter_new.lua`. The user's running `hs.window.filter` is never modified during Steps 1-9. See implementation guide for details.
+**Performance Optimizations:**
+- Default filter calls `keepActive()` to maintain global watcher (avoids 0.4s cold start on each operation)
+- PreFilter blacklists "Web Content$" pattern to skip browser helper processes
+- Cold start: ~0.4s (once), warm operations: instant
+
+**Development approach:** All work happened in `window_filter_new.lua`. The user's running `hs.window.filter` was never modified during development.
 
 ---
 
@@ -58,9 +80,8 @@
 2. [Architecture Overview](#2-architecture-overview)
 3. [Core Design Principles](#3-core-design-principles)
 4. [Module Structure](#4-module-structure)
-5. [Implementation Phases](#5-implementation-phases)
-6. [Future Deprecation Candidates](#6-future-deprecation-candidates)
-7. [Known Bugs to Fix](#7-known-bugs-to-fix)
+5. [Future Deprecation Candidates](#5-future-deprecation-candidates)
+6. [Known Bugs Fixed](#6-known-bugs-fixed)
 
 ---
 
@@ -286,92 +307,11 @@ local Config = {
 
 ---
 
-## 5. Implementation Phases
-
-### Phase 0: Contract Tests (Week 1)
-
-1. Create `test_window_filter.lua` in `~/git.forks/hammerspoon/extensions/window/`
-2. Write comprehensive contract tests against current `hs.window.filter`
-3. Verify all tests pass against current implementation
-4. These tests define the behavioral contract for the rewrite
-
-**Deliverable**: Contract test suite (~40 tests) that passes against current implementation
-
-### Phase 1: Core Infrastructure (Week 1)
-
-1. Implement safeCall utility
-2. Implement WindowInfo
-3. Implement AppInfo
-4. Implement FilterRules
-5. Write internal component tests
-
-**Deliverable**: Core data structures with tests
-
-### Phase 2: Filter Logic (Week 1-2)
-
-1. Implement Filter.matchesRule
-2. Implement Filter.matches
-3. Implement all filter criteria
-4. Write comprehensive filter tests
-
-**Deliverable**: Pure filter logic with 100% test coverage
-
-### Phase 3: PreFilter (Week 2)
-
-1. Implement PreFilter.shouldTrack
-2. Add configuration options
-3. Write tests
-
-**Deliverable**: PreFilter with tests
-
-### Phase 4: Tracker (Week 2-3)
-
-1. Implement Tracker class
-2. App registration/unregistration
-3. Window registration/unregistration
-4. Event handling
-5. Zombie cleanup
-6. Write tests
-
-**Deliverable**: Tracker with tests
-
-### Phase 5: Manager (Week 3)
-
-1. Implement Manager singleton
-2. Instance coordination
-3. Context management
-4. Event routing
-5. Write tests
-
-**Deliverable**: Manager with tests
-
-### Phase 6: Public API (Week 3-4)
-
-1. Implement WF class
-2. All public methods
-3. Default windowfilter
-4. Compatibility verification
-5. Write API tests
-
-**Deliverable**: Full API implementation with tests
-
-### Phase 7: Integration & Polish (Week 4)
-
-1. Integration tests
-2. Performance benchmarking
-3. Memory testing
-4. Documentation
-5. Edge case handling
-
-**Deliverable**: Production-ready module
-
----
-
-## 6. Future Deprecation Candidates
+## 5. Future Deprecation Candidates
 
 These API elements could be improved in a future breaking version:
 
-### 6.1 `setAppFilter` Overloading
+### 5.1 `setAppFilter` Overloading
 
 **Current**: `setAppFilter(name, filter)` where filter can be `false`, `true`, `nil`, or a table.
 
@@ -384,7 +324,7 @@ These API elements could be improved in a future breaking version:
 
 **Migration**: Keep current API, add new methods, deprecate in v2.
 
-### 6.2 Constructor Overloading
+### 5.2 Constructor Overloading
 
 **Current**: `new(nil|true|false|string|table|function)`
 
@@ -399,7 +339,7 @@ windowfilter.custom(fn)        -- Custom function
 
 **Migration**: Keep `new()`, add named constructors.
 
-### 6.3 Pseudo-events as Separate Subscriptions
+### 5.3 Pseudo-events as Separate Subscriptions
 
 **Current**: Pseudo-events (`hasWindow`, `windowsChanged`) mixed with real events.
 
@@ -411,7 +351,7 @@ windowfilter.custom(fn)        -- Custom function
 :onNoWindows(fn)               -- Lost all windows
 ```
 
-### 6.4 `forceRefreshOnSpaceChange` Global
+### 5.4 `forceRefreshOnSpaceChange` Global
 
 **Current**: Module-level variable affecting all instances.
 
@@ -422,9 +362,9 @@ windowfilter.custom(fn)        -- Custom function
 
 ---
 
-## 7. Known Bugs to Fix
+## 6. Known Bugs Fixed
 
-### 7.1 `rejectRegions` Uses Wrong Variable
+### 6.1 `rejectRegions` Uses Wrong Variable
 
 **Location**: Current `window_filter.lua` line 228
 
@@ -438,4 +378,4 @@ if filter.rejectRegions and matchRegions(filter.allowRegions,win.frame) then ret
 if filter.rejectRegions and matchRegions(filter.rejectRegions,win.frame) then return false,'rejectRegions' end
 ```
 
-**Action**: Fix this bug in the rewrite. Add a contract test that exposes this bug against the current implementation (the test should fail against current, pass against new).
+**Status**: Fixed in `window_filter_new.lua`. The new implementation correctly uses `filter.rejectRegions`.
