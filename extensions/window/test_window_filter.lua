@@ -285,6 +285,10 @@ function testVisibleFilter()
   return success()
 end
 
+-- NOTE: This test is flaky. The filter checks win.title (cached at filter time),
+-- but the assertion calls win:title() (live query). If a window's title changes
+-- to empty between filtering and assertion, the test fails. This is not a bug
+-- in the implementation - windowfilter correctly works on state snapshots.
 function testAllowTitlesNumber()
   hs.openConsole()
   local f = wf.new(true):setDefaultFilter({allowTitles = 1})

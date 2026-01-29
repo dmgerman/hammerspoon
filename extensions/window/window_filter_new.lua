@@ -689,12 +689,94 @@ function PreFilter.shouldTrack(hsWindow, hsApp, config)
   return true, nil
 end
 
+----------------------------------------------------------------------
+-- Ignore Lists (matching original implementation)
+----------------------------------------------------------------------
+
+-- Apps that have no windows or GUI, such as system services, background daemons, and helper apps
+-- These are always ignored even by an "allow all" windowfilter
+local SKIP_APPS_NO_PID = {
+  -- These will be shown as a warning in the console ("No accessibility access to app ...")
+  'universalaccessd', 'sharingd', 'Safari Networking', 'Spotlight Networking',
+  'iTunes Helper', 'Safari Web Content', 'App Store Web Content', 'Safari Database Storage',
+  'Google Chrome Helper', 'Spotify Helper', 'Todoist Networking', 'Safari Storage',
+  'Todoist Database Storage', 'AAM Updates Notifier', 'Slack Helper',
+}
+
+local SKIP_APPS_NO_WINDOWS = {
+  -- Apps with no useful windows
+  'com.apple.internetaccounts', 'CoreServicesUIAgent', 'AirPlayUIAgent',
+  'com.apple.security.pboxd', 'PowerChime', 'SystemUIServer', 'Dock',
+  'com.apple.dock.extra', 'storeuid', 'Folder Actions Dispatcher',
+  'Keychain Circle Notification', 'Wi-Fi', 'Image Capture Extension',
+  'iCloud Photos', 'System Events', 'Speech Synthesis Server',
+  'Dropbox Finder Integration', 'LaterAgent', 'Karabiner_AXNotifier',
+  'Photos Agent', 'EscrowSecurityAlert', 'Google Chrome Helper',
+  'com.apple.MailServiceAgent', 'Safari Web Content', 'Mail Web Content',
+  'Safari Networking', 'nbagent', 'rcd', 'Evernote Helper', 'BTTRelaunch',
+}
+
+-- Apps with transient windows that are usually not interesting for window management
+local SKIP_APPS_TRANSIENT_WINDOWS = {
+  -- System UI
+  'Spotlight', 'Notification Center', 'loginwindow', 'ScreenSaverEngine', 'PressAndHold',
+  -- Preferences/utilities
+  'PopClip', 'Isolator', 'CheatSheet', 'CornerClickBG', 'Alfred 2', 'Moom', 'CursorSense Manager',
+  -- Menubar apps
+  'Music Manager', 'Google Drive', 'Dropbox', '1Password mini', 'Colors for Hue', 'MacID',
+  'CrashPlan menu bar', 'Flux', 'Jettison', 'Bartender', 'SystemPal', 'BetterSnapTool',
+  'Grandview', 'Radium', 'MenuMetersApp', 'DemoPro',
+}
+
+-- Build the ignoreAlways table (apps always ignored)
+local ignoreAlways = {}
+for _, list in ipairs({SKIP_APPS_NO_PID, SKIP_APPS_NO_WINDOWS}) do
+  for _, appname in ipairs(list) do
+    ignoreAlways[appname] = true
+  end
+end
+
+-- Build the ignoreInDefaultFilter table (apps ignored in default filter only)
+local ignoreInDefaultFilter = {}
+for _, appname in ipairs(SKIP_APPS_TRANSIENT_WINDOWS) do
+  ignoreInDefaultFilter[appname] = true
+end
+
+--- hs.window.filter.ignoreAlways
+--- Variable
+--- A table of application names (as per `hs.application:name()`) that are always ignored by this module.
+--- These are apps with no windows or any visible GUI, such as system services, background daemons and "helper" apps.
+---
+--- You can add an app to this table with `hs.window.filter.ignoreAlways['Background App Title'] = true`
+---
+--- Notes:
+---  * As the name implies, even the empty, "allow all" windowfilter will ignore these apps.
+---  * You don't *need* to keep this table up to date, since non GUI apps will simply never show up anywhere;
+---    this table is just used as a "root" filter to gain a (very small) performance improvement.
+windowfilter.ignoreAlways = ignoreAlways
+
+--- hs.window.filter.ignoreInDefaultFilter
+--- Variable
+--- A table of application names that are ignored by the default windowfilter.
+--- These are apps with transient windows that are usually not interesting for window management.
+---
+--- You can add an app to this table with `hs.window.filter.ignoreInDefaultFilter['Menubar App'] = true`
+windowfilter.ignoreInDefaultFilter = ignoreInDefaultFilter
+
+----------------------------------------------------------------------
+
 --- Create a default PreFilter configuration.
+--- Returns a fresh copy of the config to avoid shared state issues.
 --- @return table Default config
 function PreFilter.defaultConfig()
+  -- Copy ignoreAlways to avoid shared state modification
+  local ignoreAppNamesCopy = {}
+  for k, v in pairs(ignoreAlways) do
+    ignoreAppNamesCopy[k] = v
+  end
   return {
     ignoreBundleIDs = {},
-    ignoreAppNames = {},
+    ignoreAppNames = ignoreAppNamesCopy,  -- Use a copy, not a reference
     ignoreAppPattern = '^QTKitServer%-',  -- Default pattern from current impl
     requireTitle = false,
     requireRole = false,
