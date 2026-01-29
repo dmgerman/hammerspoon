@@ -110,7 +110,9 @@ Step 8b: getWindows + Sorting + Notify
         ↓
 Step 9: Default filters + module-level functions
         ↓
-Step 10: Run Step 0 tests against new implementation + performance validation
+Step 10: Behavioral contract tests (notify, setOverrideFilter, iswf, etc.)
+        ↓
+Step 11: Run contract tests against new implementation + performance validation
 ```
 
 ## Step-by-Step Implementation Details
@@ -969,7 +971,210 @@ Future optimization opportunities (deferred to avoid scope creep):
 
 ---
 
-### Step 10: Contract Verification + Performance (~50 lines of tests)
+### Step 10: Behavioral Contract Tests (~100 lines)
+
+**Purpose**: Add behavioral tests for API functions not yet covered by contract tests.
+
+**Testing strategy**: Use apps that always exist on macOS:
+- **Finder** - always running, always has windows
+- **Hammerspoon** - we're running in it, can open console with `hs.openConsole()`
+
+**Tests to add to test_window_filter.lua:**
+
+1. `notify()` behavior (using Finder):
+   ```lua
+   function testNotifyImmediate()
+     local called = false
+     local receivedWins = nil
+     local f = wf.new('Finder')
+     f:notify(function(wins) called = true; receivedWins = wins end, nil, true)
+     assertTrue(called)
+     assertIsTable(receivedWins)
+     f:delete()
+   end
+
+   function testNotifyFnEmpty()
+     local fnCalled, fnEmptyCalled = false, false
+     local f = wf.new(false)  -- reject all
+     f:notify(function() fnCalled = true end, function() fnEmptyCalled = true end, true)
+     assertFalse(fnCalled)
+     assertTrue(fnEmptyCalled)
+     f:delete()
+   end
+   ```
+
+2. `setOverrideFilter` behavior (using Finder):
+   ```lua
+   function testSetOverrideFilterRejects()
+     local f = wf.new('Finder')  -- allow Finder
+     f:setOverrideFilter({visible = false})  -- but override rejects visible
+     local wins = f:getWindows()
+     -- All visible Finder windows should be rejected
+     assertIsEqual(0, #wins)
+     f:delete()
+   end
+   ```
+
+3. `iswf()` behavior (pure logic):
+   ```lua
+   function testIswfBehavior()
+     local f = wf.new()
+     assertTrue(wf.iswf(f))
+     assertFalse(wf.iswf({}))
+     assertFalse(wf.iswf(nil))
+     assertFalse(wf.iswf("string"))
+     assertFalse(wf.iswf(123))
+     f:delete()
+   end
+   ```
+
+4. `windowfilter.copy()` module function (pure logic):
+   ```lua
+   function testModuleCopyFunction()
+     local f = wf.new('Safari')
+     local copy = wf.copy(f)
+     assertTrue(wf.iswf(copy))
+     copy:rejectApp('Safari')
+     assertTrue(f:isAppAllowed('Safari'))  -- original unchanged
+     assertFalse(copy:isAppAllowed('Safari'))
+     f:delete()
+     copy:delete()
+   end
+   ```
+
+5. `ignoreInDefaultFilter` effect (using Finder):
+   ```lua
+   function testIgnoreInDefaultFilterBehavior()
+     -- Save original state
+     local wasIgnored = wf.ignoreInDefaultFilter['Finder']
+
+     -- Add Finder to ignore list
+     wf.ignoreInDefaultFilter['Finder'] = true
+
+     -- Create new default-like filter and verify Finder rejected
+     local f = wf.new(true)
+     for app in pairs(wf.ignoreInDefaultFilter) do f:rejectApp(app) end
+     f:setDefaultFilter({visible = true})
+     assertFalse(f:isAppAllowed('Finder'))
+     f:delete()
+
+     -- Restore
+     wf.ignoreInDefaultFilter['Finder'] = wasIgnored
+   end
+   ```
+
+6. Default singleton Hammerspoon behavior:
+   ```lua
+   function testDefaultAllowsHammerspoonConsole()
+     hs.openConsole()  -- ensure console exists
+     hs.timer.usleep(100000)  -- brief wait for window
+     local consoleWin = hs.window.find('Console')
+     if consoleWin then
+       assertTrue(wf.default:isWindowAllowed(consoleWin))
+     end
+     -- Note: test passes if console window found and allowed
+   end
+   ```
+
+7. `switchedToSpace()` (pure logic):
+   ```lua
+   function testSwitchedToSpaceNoError()
+     -- Should not error
+     wf.switchedToSpace(1)
+     wf.switchedToSpace(2)
+   end
+   ```
+
+8. `startBatchOperation/stopBatchOperation` (pure logic):
+   ```lua
+   function testBatchOperations()
+     local id = wf.startBatchOperation()
+     assertIsString(id)
+     assertTrue(#id > 0)
+     wf.stopBatchOperation(id)  -- should not error
+   end
+   ```
+
+9. Direction methods (using Finder):
+   ```lua
+   function testDirectionMethodsNoError()
+     local f = wf.new('Finder')
+     local wins = f:getWindows()
+     if #wins > 0 then
+       local win = wins[1]
+       -- These should not error and return tables
+       assertIsTable(f:windowsToEast(win) or {})
+       assertIsTable(f:windowsToWest(win) or {})
+       assertIsTable(f:windowsToNorth(win) or {})
+       assertIsTable(f:windowsToSouth(win) or {})
+     end
+     f:delete()
+   end
+   ```
+
+10. Instance focus methods behavior (using Finder):
+    ```lua
+    function testFocusWindowMethodsBehavior()
+      local f = wf.new('Finder')
+      local wins = f:getWindows()
+      if #wins >= 2 then
+        -- Find the leftmost window
+        local leftWin = wins[1]
+        for _, w in ipairs(wins) do
+          if w:frame().x < leftWin:frame().x then leftWin = w end
+        end
+        leftWin:focus()
+        hs.timer.usleep(50000)  -- brief settle
+
+        -- Try to focus window to east
+        local originalFocused = hs.window.focusedWindow()
+        local result = f:focusWindowEast()  -- returns boolean
+
+        assertIsBoolean(result)
+        -- If result is true, focus should have changed
+        if result then
+          local newFocused = hs.window.focusedWindow()
+          assertTrue(newFocused:id() ~= originalFocused:id())
+        end
+        -- Restore original focus
+        if originalFocused then originalFocused:focus() end
+      end
+      f:delete()
+    end
+    ```
+
+11. Module-level focus functions behavior:
+    ```lua
+    function testModuleFocusFunctionsBehavior()
+      -- These use default filter
+      local originalFocused = hs.window.focusedWindow()
+
+      -- Just verify they don't error and return booleans
+      local result = wf.focusEast()
+      assertIsBoolean(result)
+
+      -- Restore focus
+      if originalFocused then originalFocused:focus() end
+    end
+    ```
+
+12. Focus function return values:
+    ```lua
+    function testFocusFunctionsReturnBool()
+      local f = wf.new(false)  -- reject all windows
+      -- With no allowed windows, focus functions should return false
+      local result = f:focusWindowEast()
+      assertIsBoolean(result)
+      assertFalse(result)  -- no windows to focus
+      f:delete()
+    end
+    ```
+
+**Exit criteria:** All behavioral contract tests pass against both old and new implementations
+
+---
+
+### Step 11: Contract Verification + Performance (~50 lines of tests)
 
 **Purpose**: The final gate. Run the Step 0 contract tests against the new implementation to verify API compatibility.
 
