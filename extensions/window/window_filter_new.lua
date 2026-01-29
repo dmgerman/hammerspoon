@@ -63,24 +63,74 @@ windowfilter._VERSION = '2.0.0-dev'
 
 --- Configuration constants for the window filter system.
 --- These values can be tuned based on real-world testing.
+--- All configuration is centralized here for easy discovery and modification.
 local Config = {
-  -- Timing (seconds)
-  RETRY_DELAY = 0.2,              -- Delay between registration retries
-  MAX_RETRIES = 5,                -- Max attempts to register window/app
-  MOVED_DEBOUNCE = 0.5,           -- Debounce for windowMoved events
-  TITLE_DEBOUNCE = 0.5,           -- Debounce for titleChanged events
-  SPACE_CHANGE_DELAY = 0.5,       -- Delay after space switch before refresh
-  ZOMBIE_CLEANUP_INTERVAL = 300,  -- Seconds between zombie app cleanup (5 min)
+  -- Timing settings (in seconds)
+  timing = {
+    retryDelay = 0.2,              -- Delay between registration retries
+    maxRetries = 5,                -- Max attempts to register window/app
+    movedDebounce = 0.5,           -- Debounce for windowMoved events
+    titleDebounce = 0.5,           -- Debounce for titleChanged events
+    spaceChangeDelay = 0.5,        -- Delay after space switch before refresh
+    zombieCleanupInterval = 300,   -- Seconds between zombie app cleanup (5 min)
+  },
 
-  -- Performance
-  ACCESSIBILITY_TIMEOUT = 0.5,    -- Max wait for AX response (seconds)
-  SKIP_SLOW_APPS = false,         -- If true, skip apps exceeding timeout
+  -- Performance settings
+  performance = {
+    accessibilityTimeout = 0.5,    -- Max wait for AX response (seconds)
+    skipSlowApps = false,          -- If true, skip apps exceeding timeout
+  },
 
-  -- Filtering defaults
-  ALLOWED_ROLES = {
-    AXStandardWindow = true,
-    AXDialog = true,
-    AXSystemDialog = true,
+  -- Default filtering settings (used by FilterRules)
+  filtering = {
+    allowedRoles = {
+      AXStandardWindow = true,
+      AXDialog = true,
+      AXSystemDialog = true,
+    },
+  },
+
+  -- PreFilter settings (early filtering before tracking)
+  prefilter = {
+    ignoreBundleIDs = {
+      ['com.apple.WebKit.WebContent'] = true,  -- Browser helper processes
+    },
+    ignoreAppPattern = '^QTKitServer%-',       -- Default pattern from original impl
+    requireTitle = false,
+    requireRole = false,
+    minTitleLength = 0,
+    allowedRoles = nil,  -- nil means no role restriction at PreFilter stage
+  },
+
+  -- Apps to skip (these build the public ignoreAlways and ignoreInDefaultFilter tables)
+  skipApps = {
+    -- Apps that show console warnings ("No accessibility access to app ...")
+    noPid = {
+      'universalaccessd', 'sharingd', 'Safari Networking', 'Spotlight Networking',
+      'iTunes Helper', 'Safari Web Content', 'App Store Web Content', 'Safari Database Storage',
+      'Google Chrome Helper', 'Spotify Helper', 'Todoist Networking', 'Safari Storage',
+      'Todoist Database Storage', 'AAM Updates Notifier', 'Slack Helper',
+    },
+    -- Apps with no useful windows
+    noWindows = {
+      'com.apple.internetaccounts', 'CoreServicesUIAgent', 'AirPlayUIAgent',
+      'com.apple.security.pboxd', 'PowerChime', 'SystemUIServer', 'Dock',
+      'com.apple.dock.extra', 'storeuid', 'Folder Actions Dispatcher',
+      'Keychain Circle Notification', 'Wi-Fi', 'Image Capture Extension',
+      'iCloud Photos', 'System Events', 'Speech Synthesis Server',
+      'Dropbox Finder Integration', 'LaterAgent', 'Karabiner_AXNotifier',
+      'Photos Agent', 'EscrowSecurityAlert', 'Google Chrome Helper',
+      'com.apple.MailServiceAgent', 'Safari Web Content', 'Mail Web Content',
+      'Safari Networking', 'nbagent', 'rcd', 'Evernote Helper', 'BTTRelaunch',
+    },
+    -- Apps with transient windows (ignored by default filter only)
+    transient = {
+      'Spotlight', 'Notification Center', 'loginwindow', 'ScreenSaverEngine', 'PressAndHold',
+      'PopClip', 'Isolator', 'CheatSheet', 'CornerClickBG', 'Alfred 2', 'Moom', 'CursorSense Manager',
+      'Music Manager', 'Google Drive', 'Dropbox', '1Password mini', 'Colors for Hue', 'MacID',
+      'CrashPlan menu bar', 'Flux', 'Jettison', 'Bartender', 'SystemPal', 'BetterSnapTool',
+      'Grandview', 'Radium', 'MenuMetersApp', 'DemoPro',
+    },
   },
 }
 
@@ -441,7 +491,7 @@ function Filter.matchesRule(rule, windowInfo, context)
   end
 
   -- Roles (check subrole against allowed list)
-  local allowedRoles = rule.allowRoles or windowfilter.allowedWindowRoles or Config.ALLOWED_ROLES
+  local allowedRoles = rule.allowRoles or windowfilter.allowedWindowRoles or Config.filtering.allowedRoles
   if allowedRoles ~= '*' then
     if type(allowedRoles) == 'string' then
       allowedRoles = {[allowedRoles] = true}
@@ -822,47 +872,13 @@ function PreFilter.shouldTrack(hsWindow, hsApp, config)
 end
 
 ----------------------------------------------------------------------
--- Ignore Lists (matching original implementation)
+-- Ignore Lists (built from Config.skipApps)
 ----------------------------------------------------------------------
 
--- Apps that have no windows or GUI, such as system services, background daemons, and helper apps
--- These are always ignored even by an "allow all" windowfilter
-local SKIP_APPS_NO_PID = {
-  -- These will be shown as a warning in the console ("No accessibility access to app ...")
-  'universalaccessd', 'sharingd', 'Safari Networking', 'Spotlight Networking',
-  'iTunes Helper', 'Safari Web Content', 'App Store Web Content', 'Safari Database Storage',
-  'Google Chrome Helper', 'Spotify Helper', 'Todoist Networking', 'Safari Storage',
-  'Todoist Database Storage', 'AAM Updates Notifier', 'Slack Helper',
-}
-
-local SKIP_APPS_NO_WINDOWS = {
-  -- Apps with no useful windows
-  'com.apple.internetaccounts', 'CoreServicesUIAgent', 'AirPlayUIAgent',
-  'com.apple.security.pboxd', 'PowerChime', 'SystemUIServer', 'Dock',
-  'com.apple.dock.extra', 'storeuid', 'Folder Actions Dispatcher',
-  'Keychain Circle Notification', 'Wi-Fi', 'Image Capture Extension',
-  'iCloud Photos', 'System Events', 'Speech Synthesis Server',
-  'Dropbox Finder Integration', 'LaterAgent', 'Karabiner_AXNotifier',
-  'Photos Agent', 'EscrowSecurityAlert', 'Google Chrome Helper',
-  'com.apple.MailServiceAgent', 'Safari Web Content', 'Mail Web Content',
-  'Safari Networking', 'nbagent', 'rcd', 'Evernote Helper', 'BTTRelaunch',
-}
-
--- Apps with transient windows that are usually not interesting for window management
-local SKIP_APPS_TRANSIENT_WINDOWS = {
-  -- System UI
-  'Spotlight', 'Notification Center', 'loginwindow', 'ScreenSaverEngine', 'PressAndHold',
-  -- Preferences/utilities
-  'PopClip', 'Isolator', 'CheatSheet', 'CornerClickBG', 'Alfred 2', 'Moom', 'CursorSense Manager',
-  -- Menubar apps
-  'Music Manager', 'Google Drive', 'Dropbox', '1Password mini', 'Colors for Hue', 'MacID',
-  'CrashPlan menu bar', 'Flux', 'Jettison', 'Bartender', 'SystemPal', 'BetterSnapTool',
-  'Grandview', 'Radium', 'MenuMetersApp', 'DemoPro',
-}
-
 -- Build the ignoreAlways table (apps always ignored)
+-- Combines noPid and noWindows lists from Config.skipApps
 local ignoreAlways = {}
-for _, list in ipairs({SKIP_APPS_NO_PID, SKIP_APPS_NO_WINDOWS}) do
+for _, list in ipairs({Config.skipApps.noPid, Config.skipApps.noWindows}) do
   for _, appname in ipairs(list) do
     ignoreAlways[appname] = true
   end
@@ -870,7 +886,7 @@ end
 
 -- Build the ignoreInDefaultFilter table (apps ignored in default filter only)
 local ignoreInDefaultFilter = {}
-for _, appname in ipairs(SKIP_APPS_TRANSIENT_WINDOWS) do
+for _, appname in ipairs(Config.skipApps.transient) do
   ignoreInDefaultFilter[appname] = true
 end
 
@@ -899,21 +915,29 @@ windowfilter.ignoreInDefaultFilter = ignoreInDefaultFilter
 
 --- Create a default PreFilter configuration.
 --- Returns a fresh copy of the config to avoid shared state issues.
+--- Values are sourced from Config.prefilter for centralized configuration.
 --- @return table Default config
 function PreFilter.defaultConfig()
+  -- Copy ignoreBundleIDs from Config to avoid shared state modification
+  local ignoreBundleIDsCopy = {}
+  for k, v in pairs(Config.prefilter.ignoreBundleIDs) do
+    ignoreBundleIDsCopy[k] = v
+  end
+
   -- Copy ignoreAlways to avoid shared state modification
   local ignoreAppNamesCopy = {}
   for k, v in pairs(ignoreAlways) do
     ignoreAppNamesCopy[k] = v
   end
+
   return {
-    ignoreBundleIDs = {},
-    ignoreAppNames = ignoreAppNamesCopy,  -- Use a copy, not a reference
-    ignoreAppPattern = '^QTKitServer%-',  -- Default pattern from current impl
-    requireTitle = false,
-    requireRole = false,
-    minTitleLength = 0,
-    allowedRoles = nil,
+    ignoreBundleIDs = ignoreBundleIDsCopy,
+    ignoreAppNames = ignoreAppNamesCopy,  -- Dynamic: built from public ignoreAlways table
+    ignoreAppPattern = Config.prefilter.ignoreAppPattern,
+    requireTitle = Config.prefilter.requireTitle,
+    requireRole = Config.prefilter.requireRole,
+    minTitleLength = Config.prefilter.minTitleLength,
+    allowedRoles = Config.prefilter.allowedRoles,
   }
 end
 
@@ -1488,7 +1512,7 @@ function Tracker:registerApp(hsApp, retryCount)
   -- Some apps take time to initialize their accessibility features
   local fw = safeCall(hsApp.focusedWindow, hsApp)
 
-  if fw or retryCount > Config.MAX_RETRIES then
+  if fw or retryCount > Config.timing.maxRetries then
     -- Create AppInfo
     local appInfo = AppInfo.new(hsApp, pid)
     if not appInfo then return end
@@ -1522,7 +1546,7 @@ function Tracker:registerApp(hsApp, retryCount)
 
   else
     -- App not ready, retry later
-    local delay = retryCount * Config.RETRY_DELAY
+    local delay = retryCount * Config.timing.retryDelay
     self.pendingApps[pid] = {
       retryCount = retryCount,
       timer = hs.timer.doAfter(delay, function()
@@ -1559,8 +1583,8 @@ function Tracker:registerWindow(hsWindow, appInfo, retryCount)
   if not id then
     -- Window doesn't have ID yet, retry later
     retryCount = (retryCount or 0) + 1
-    if retryCount <= Config.MAX_RETRIES then
-      local delay = retryCount * Config.RETRY_DELAY
+    if retryCount <= Config.timing.maxRetries then
+      local delay = retryCount * Config.timing.retryDelay
       self.pendingWindows[hsWindow] = {
         retryCount = retryCount,
         appInfo = appInfo,
@@ -1834,7 +1858,7 @@ function Tracker:_onWindowEvent(event, pid, windowId)
     if self.movedTimers[windowId] then
       self.movedTimers[windowId]:stop()
     end
-    self.movedTimers[windowId] = hs.timer.doAfter(Config.MOVED_DEBOUNCE, function()
+    self.movedTimers[windowId] = hs.timer.doAfter(Config.timing.movedDebounce, function()
       self.movedTimers[windowId] = nil
       if not self.running then return end
       if not appInfo.windows[windowId] then return end
@@ -1859,7 +1883,7 @@ function Tracker:_onWindowEvent(event, pid, windowId)
     if self.titleTimers[windowId] then
       self.titleTimers[windowId]:stop()
     end
-    self.titleTimers[windowId] = hs.timer.doAfter(Config.TITLE_DEBOUNCE, function()
+    self.titleTimers[windowId] = hs.timer.doAfter(Config.timing.titleDebounce, function()
       self.titleTimers[windowId] = nil
       if not self.running then return end
       if not appInfo.windows[windowId] then return end
@@ -2076,7 +2100,7 @@ end
 --- Handle space change event (internal).
 function Manager:_onSpaceChanged()
   -- Delay slightly to let the system settle
-  hs.timer.doAfter(Config.SPACE_CHANGE_DELAY, function()
+  hs.timer.doAfter(Config.timing.spaceChangeDelay, function()
     self:_handleSpaceChange()
   end)
 end

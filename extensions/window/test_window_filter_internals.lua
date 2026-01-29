@@ -168,9 +168,9 @@ end
 
 local function testConfigExists()
   assertIsNotNil(wf_new._config)
-  assertIsNumber(wf_new._config.RETRY_DELAY)
-  assertIsNumber(wf_new._config.MAX_RETRIES)
-  assertIsTable(wf_new._config.ALLOWED_ROLES)
+  assertIsNumber(wf_new._config.timing.retryDelay)
+  assertIsNumber(wf_new._config.timing.maxRetries)
+  assertIsTable(wf_new._config.filtering.allowedRoles)
   return success()
 end
 
@@ -500,6 +500,43 @@ local function testPreFilterDefaultConfig()
   assertIsString(config.ignoreAppPattern)
   assertFalse(config.requireTitle)
   assertFalse(config.requireRole)
+  return success()
+end
+
+local function testConfigStructure()
+  local config = wf_new._config
+  assertIsTable(config)
+
+  -- Verify nested structure exists
+  assertIsTable(config.timing)
+  assertIsTable(config.performance)
+  assertIsTable(config.filtering)
+  assertIsTable(config.prefilter)
+  assertIsTable(config.skipApps)
+
+  -- Verify timing values
+  assertIsNumber(config.timing.retryDelay)
+  assertIsNumber(config.timing.maxRetries)
+  assertIsNumber(config.timing.movedDebounce)
+  assertIsNumber(config.timing.titleDebounce)
+  assertIsNumber(config.timing.spaceChangeDelay)
+
+  -- Verify filtering
+  assertIsTable(config.filtering.allowedRoles)
+
+  -- Verify prefilter contains expected values
+  assertIsTable(config.prefilter.ignoreBundleIDs)
+  assertTrue(config.prefilter.ignoreBundleIDs['com.apple.WebKit.WebContent'] == true)
+  assertIsString(config.prefilter.ignoreAppPattern)
+
+  -- Verify skipApps lists
+  assertIsTable(config.skipApps.noPid)
+  assertIsTable(config.skipApps.noWindows)
+  assertIsTable(config.skipApps.transient)
+  assertGreaterThan(0, #config.skipApps.noPid)
+  assertGreaterThan(0, #config.skipApps.noWindows)
+  assertGreaterThan(0, #config.skipApps.transient)
+
   return success()
 end
 
@@ -2036,6 +2073,7 @@ local function runAllTests()
   runTest("testPreFilterShouldTrackWithValidWindow", testPreFilterShouldTrackWithValidWindow)
   runTest("testPreFilterShouldTrackWithNil", testPreFilterShouldTrackWithNil)
   runTest("testPreFilterDefaultConfig", testPreFilterDefaultConfig)
+  runTest("testConfigStructure", testConfigStructure)
 
   -- Step 5: Events
   print("\nStep 5: Events")
