@@ -835,12 +835,30 @@ end)
 
 ---
 
-### Step 8: WindowFilter Class (~300 lines)
+### Step 8a: WindowFilter Class + Events (~200 lines)
 
 **What to implement:**
-- `WF.new(fn, logname, loglevel)` - All constructor forms
-- All public methods: setAppFilter, setDefaultFilter, setOverrideFilter, setFilters, getFilters, allowApp, rejectApp, isAppAllowed, isWindowAllowed, getWindows, subscribe, unsubscribe, unsubscribeAll, pause, resume, delete, setSortOrder, setCurrentSpace, setScreens, setRegions, keepActive
-- Custom filter function support (per Section 6.6 of the main plan)
+- `WF.new(fn, logname, loglevel)` - All constructor forms (nil, true, false, string, table, function)
+- Filter configuration methods: `setAppFilter`, `setDefaultFilter`, `setOverrideFilter`, `setFilters`, `getFilters`, `allowApp`, `rejectApp`
+- Query methods: `isAppAllowed`, `isWindowAllowed`
+- Configuration: `setSortOrder`, `setCurrentSpace`, `setScreens`, `setRegions`
+- Lifecycle: `pause`, `resume`, `delete`, `keepActive`, `copy`
+- Subscriptions: `subscribe`, `unsubscribe`, `unsubscribeAll`
+- Event handling: `_handleTrackerEvent()` with state tracking
+- Derived events (windowVisible, windowOnScreen, etc.) and pseudo-events (windowAllowed, windowRejected)
+- Manager integration (activate on subscribe/keepActive, deactivate on delete)
+
+**Design Decision: State Tracking for Events (Option B)**
+
+We track window state to emit derived events correctly. When a window is created visible, both `windowCreated` AND `windowVisible` fire. This maintains API compatibility - users subscribing to `windowVisible` expect it to fire for all visible windows, including newly created ones.
+
+State tracked per window:
+- allowed (passes filter)
+- visible (not hidden by app hide)
+- onScreen (not minimized, has frame)
+- inCurrentSpace (if tracking spaces)
+
+On each event, compare old vs new state and emit appropriate derived events.
 
 **Custom filter function handling:**
 ```lua
@@ -868,9 +886,32 @@ end
 
 **Key point:** Custom filter functions are called per-window at query time, not used for early filtering. This preserves the flexibility users expect.
 
-**Run contract tests after this step** to verify API compatibility.
+**Exit criteria:** Event subscriptions work, derived events fire correctly, filter configuration works
 
-**Exit criteria:** All public API methods work, contract tests pass
+---
+
+### Step 8b: getWindows + Sorting (~80 lines)
+
+**What to implement:**
+- `getWindows()` - Return filtered windows with sorting
+- Sort order handling using `setSortOrder` configuration
+
+**Note on potential reimplementation:**
+
+The current `getWindows()` implementation has several characteristics worth considering:
+1. **Synchronous/blocking** - iterates all windows and sorts on every call
+2. **No caching** - repeated calls redo all work
+3. **Sorting overhead** - happens even if caller doesn't need sorted results
+4. **Stale snapshots** - returned windows may have changed by time of use
+
+For Step 8b, we will **reuse the existing sorting logic** from `hs.window` for compatibility. However, future optimization opportunities include:
+- Caching sorted results until state changes
+- Lazy sorting (only sort if sort order specified)
+- Async/streaming API for large window sets
+
+These optimizations are deferred to avoid scope creep and maintain compatibility with existing behavior.
+
+**Exit criteria:** `getWindows()` returns correctly filtered and sorted windows, matches original behavior
 
 ---
 
