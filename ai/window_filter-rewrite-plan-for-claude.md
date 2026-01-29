@@ -104,7 +104,9 @@ Step 6: Tracker
         ↓
 Step 7: Manager (including spaces handling with eager refresh)
         ↓
-Step 8: WindowFilter Class (public API, including custom filter functions)
+Step 8a: WindowFilter Class + Events (public API, subscriptions, derived events)
+        ↓
+Step 8b: getWindows + Sorting + Notify
         ↓
 Step 9: Default filters + module-level functions
         ↓
@@ -890,32 +892,61 @@ end
 
 ---
 
-### Step 8b: getWindows + Sorting (~80 lines)
+### Step 8b: getWindows + Sorting + Notify (~100 lines)
 
 **What to implement:**
-- `getWindows()` - Return filtered windows with sorting
+- `getWindows([sortOrder])` - Return filtered windows with sorting
+- `notify(fn, fnEmpty, immediate)` - Callback when window list changes (uses getWindows internally)
 - Sort order handling using `setSortOrder` configuration
+- Timestamp tracking for sorting
 
-**Note on potential reimplementation:**
+**Design Decisions:**
 
-The current `getWindows()` implementation has several characteristics worth considering:
+1. **Timing data for sorting**: Track timestamps in WindowFilter's `_windows` state per window.
+   - `timeCreated`: Set when window first enters `_windows` (passes filter for first time)
+   - `timeFocused`: Updated on each `windowFocused` event for that window
+   - Each WindowFilter needs independent timestamps - a window focused while rejected by filter A shouldn't update filter A's focus time
+
+2. **Window source**: Return windows from `self._windows` (the state table).
+   - This matches the original where `getWindows()` returns currently-allowed windows
+   - The state is already populated by our event handling
+
+3. **One-shot mode**: Match original behavior exactly.
+   ```lua
+   -- Pattern from original:
+   local wasActive = activeInstances[self]
+   start(self)  -- activate if needed
+   local wins = getWindowObjects(self, sortOrder)
+   if not wasActive then self:pause() end
+   return wins
+   ```
+   - Users expect `wf.new('Safari'):getWindows()` to work without explicit subscribe/keepActive
+   - Temporary activation populates `_windows`, then we pause
+
+4. **Sorting comparators**: Match original exactly.
+   - `sortByFocusedLast`: most recently focused first (default)
+   - `sortByFocused`: least recently focused first
+   - `sortByCreatedLast`: newest first
+   - `sortByCreated`: oldest first
+
+5. **Module-level callable**: Deferred to Step 9.
+   - `windowfilter(...)` → `windowfilter.new(...):getWindows()` is a module feature
+
+**Note on potential future optimization:**
+
+The current implementation has characteristics worth noting:
 1. **Synchronous/blocking** - iterates all windows and sorts on every call
 2. **No caching** - repeated calls redo all work
-3. **Sorting overhead** - happens even if caller doesn't need sorted results
-4. **Stale snapshots** - returned windows may have changed by time of use
 
-For Step 8b, we will **reuse the existing sorting logic** from `hs.window` for compatibility. However, future optimization opportunities include:
+Future optimization opportunities (deferred to avoid scope creep):
 - Caching sorted results until state changes
 - Lazy sorting (only sort if sort order specified)
-- Async/streaming API for large window sets
 
-These optimizations are deferred to avoid scope creep and maintain compatibility with existing behavior.
-
-**Exit criteria:** `getWindows()` returns correctly filtered and sorted windows, matches original behavior
+**Exit criteria:** `getWindows()` returns correctly filtered and sorted windows; `notify()` works correctly; matches original behavior
 
 ---
 
-### Step 9: Default Filters + Module Functions (~100 lines)
+### Step 9: Default Filters + Module Functions (~120 lines)
 
 **What to implement:**
 - `windowfilter.default` - Lazy singleton
@@ -929,6 +960,10 @@ These optimizations are deferred to avoid scope creep and maintain compatibility
 - `windowfilter.switchedToSpace(n)` - Manual space notification
 - `windowfilter.forceRefreshOnSpaceChange` - Configuration
 - `windowfilter.isGuiApp(name)` - Utility
+- `windowfilter.iswf(t)` - Check if value is a windowfilter
+- `windowfilter.setLogLevel(lvl)` - Set log level
+- `windowfilter.startBatchOperation()` / `stopBatchOperation(id)` - Batch operation helpers
+- Module callable via `__call` metamethod: `windowfilter(...)` → `windowfilter.new(...):getWindows()`
 
 **Exit criteria:** Module is feature-complete, all contract tests pass
 
