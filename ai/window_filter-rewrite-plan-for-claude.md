@@ -49,6 +49,18 @@ These conventions were decided during implementation and should be followed cons
    - Add completion marker to step in this plan
    - Document any new design decisions in relevant step section
 
+8. **Mandatory testing for each step**: Every step MUST include persistent tests:
+   - **Contract tests**: `test_window_filter.lua` - Public API tests (work with old and new implementations)
+   - **Internal tests**: `test_window_filter_internals.lua` - Component tests via `_` prefixed exports
+   - Tests load `window_filter_new.lua` via dofile
+   - Tests verify component behavior and catch regressions
+   - Run tests before marking step complete
+   - Run both test files to ensure no regressions:
+     ```bash
+     /Users/dmg/bin/osx/hs -c 'dofile(".../test_window_filter.lua")'
+     /Users/dmg/bin/osx/hs -c 'dofile(".../test_window_filter_internals.lua")'
+     ```
+
 ---
 
 ## Core Principles
@@ -726,17 +738,58 @@ end)
 - `Tracker:registerWindow(hsWindow, appInfo)`, `:unregisterWindow(windowInfo, appInfo)` - Window management
 - Event handlers for app/window events
 - Zombie cleanup
+- `ManagerStub` - Minimal stub for testing Tracker in isolation
 
-**Tests to write first:**
-```lua
-Test.describe('Tracker', function()
-    Test.it('registers running apps', ...)
-    Test.it('tracks new windows', ...)
-    Test.it('handles app termination', ...)
-end)
-```
+**Design Decisions (Step 6):**
 
-**Exit criteria:** Tracker correctly manages app/window lifecycle
+1. **Manager interface**: Tracker defines a clear callback interface that Manager must implement:
+   - `onWindowCreated(windowInfo, appInfo)`
+   - `onWindowDestroyed(windowInfo, appInfo)`
+   - `onWindowMoved(windowInfo, appInfo)`
+   - `onWindowMinimized(windowInfo, appInfo)`
+   - `onWindowUnminimized(windowInfo, appInfo)`
+   - `onWindowTitleChanged(windowInfo, appInfo)`
+   - `onAppActivated(appInfo)`
+   - `onAppDeactivated(appInfo)`
+   - `onAppHidden(appInfo)`
+   - `onAppUnhidden(appInfo)`
+   - `onFocusChanged(windowInfo, appInfo, prevWindowInfo)`
+
+   ManagerStub implements these as no-ops or logging for Step 6 testing.
+
+2. **Simple events only**: Tracker reports raw OS events. It does NOT handle:
+   - Event chaining (windowCreated → windowVisible → windowOnScreen)
+   - Pseudo-events (windowAllowed, windowRejected)
+   - Filter status changes
+
+   Manager (Step 7) handles state transitions and derived events.
+
+3. **Focus state ownership**: Tracker notifies Manager of focus changes via `onFocusChanged()`. Manager owns `focusedWindowId` and `activeAppPid` state.
+
+4. **Debouncing in Tracker**: Per-window debounce timers for `windowMoved` and `titleChanged`. Timers stored alongside WindowInfo and cancelled on window destruction.
+
+5. **WindowInfo updates before notify**: Tracker calls `windowInfo:refresh()` before notifying Manager, ensuring Manager always sees current state.
+
+6. **Error handling**: All Manager callbacks wrapped in pcall. Tracker logs errors but doesn't crash if Manager has bugs.
+
+7. **Watcher lifecycle**: Careful cleanup on `stop()`:
+   - Stop all per-window watchers
+   - Stop all per-app watchers
+   - Stop app watcher
+   - Cancel all pending retry timers
+   - Cancel all debounce timers
+
+8. **PreFilter integration**: Uses `PreFilter.shouldTrackApp()` and `PreFilter.shouldTrack()` from Step 4 to decide whether to create watchers.
+
+**Implementation order:**
+1. Basic Tracker structure + ManagerStub
+2. App watcher + app registration/unregistration with retry
+3. Window registration + per-window watchers with retry
+4. Event handlers (raw events to Manager)
+5. Debouncing for moved/titleChanged
+6. Cleanup and zombie detection
+
+**Exit criteria:** Tracker correctly manages app/window lifecycle, reports events to ManagerStub
 
 ---
 

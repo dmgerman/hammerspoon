@@ -1,0 +1,814 @@
+-- test_window_filter_internals.lua
+-- Internal component tests for window_filter_new.lua
+-- These tests verify the internal components via _ prefixed exports.
+--
+-- Run via hs CLI:
+--   /Users/dmg/bin/osx/hs -c 'dofile("/Users/dmg/git.forks/hammerspoon/extensions/window/test_window_filter_internals.lua")'
+
+-- ============================================================================
+-- TEST FRAMEWORK
+-- ============================================================================
+
+local function success()
+  return "Success"
+end
+
+local function failure(msg)
+  error(string.format("Assertion failure: %s", msg), 2)
+end
+
+local function assertIsEqual(expected, actual)
+  if type(expected) ~= type(actual) then
+    failure(string.format("expected type: '%s', actual type: '%s'", type(expected), type(actual)))
+  end
+  if expected ~= actual then
+    failure(string.format("expected: '%s', actual: '%s'", tostring(expected), tostring(actual)))
+  end
+end
+
+local function assertTrue(a)
+  if not a then
+    failure("expected: true, actual: " .. tostring(a))
+  end
+end
+
+local function assertFalse(a)
+  if a then
+    failure("expected: false, actual: " .. tostring(a))
+  end
+end
+
+local function assertIsNil(a)
+  if a ~= nil then
+    failure("expected: nil, actual: " .. tostring(a))
+  end
+end
+
+local function assertIsNotNil(a)
+  if a == nil then
+    failure("expected: not-nil, actual: nil")
+  end
+end
+
+local function assertGreaterThan(a, b)
+  if b <= a then
+    failure(string.format("expected: %s > %s", tostring(b), tostring(a)))
+  end
+end
+
+local function assertIsTable(a)
+  if type(a) ~= "table" then
+    failure(string.format("expected type: 'table', actual type: '%s'", type(a)))
+  end
+end
+
+local function assertIsBoolean(a)
+  if type(a) ~= "boolean" then
+    failure(string.format("expected type: 'boolean', actual type: '%s'", type(a)))
+  end
+end
+
+local function assertIsString(a)
+  if type(a) ~= "string" then
+    failure(string.format("expected type: 'string', actual type: '%s'", type(a)))
+  end
+end
+
+local function assertIsNumber(a)
+  if type(a) ~= "number" then
+    failure(string.format("expected type: 'number', actual type: '%s'", type(a)))
+  end
+end
+
+local function assertIsFunction(a)
+  if type(a) ~= "function" then
+    failure(string.format("expected type: 'function', actual type: '%s'", type(a)))
+  end
+end
+
+local function assertErrorContains(fn, expectedMsg)
+  local ok, err = pcall(fn)
+  if ok then
+    failure("expected error, but function succeeded")
+  end
+  if not string.find(tostring(err), expectedMsg, 1, true) then
+    failure(string.format("expected error containing '%s', got: %s", expectedMsg, tostring(err)))
+  end
+end
+
+-- ============================================================================
+-- TEST RUNNER
+-- ============================================================================
+
+local testResults = {
+  passed = 0,
+  failed = 0,
+  errors = {}
+}
+
+local function runTest(name, fn)
+  local ok, result = pcall(fn)
+  if ok and result == "Success" then
+    testResults.passed = testResults.passed + 1
+    print(string.format("  ✓ %s", name))
+  else
+    testResults.failed = testResults.failed + 1
+    local errMsg = ok and tostring(result) or tostring(result)
+    table.insert(testResults.errors, {name = name, error = errMsg})
+    print(string.format("  ✗ %s: %s", name, errMsg))
+  end
+end
+
+-- ============================================================================
+-- LOAD NEW IMPLEMENTATION
+-- ============================================================================
+
+local wf_new = dofile("/Users/dmg/git.forks/hammerspoon/extensions/window/window_filter_new.lua")
+
+-- ============================================================================
+-- STEP 1: UTILITIES TESTS
+-- ============================================================================
+
+local function testSafeCallWithValidFunction()
+  local obj = {value = 42}
+  local fn = function(self) return self.value end
+  local result = wf_new._safeCall(fn, obj)
+  assertIsEqual(42, result)
+  return success()
+end
+
+local function testSafeCallWithNilFunction()
+  local result = wf_new._safeCall(nil, {})
+  assertIsNil(result)
+  return success()
+end
+
+local function testSafeCallWithError()
+  local fn = function() error("intentional error") end
+  local result = wf_new._safeCall(fn, nil)
+  assertIsNil(result)
+  return success()
+end
+
+local function testSafeGetScreenIdWithWindow()
+  local win = hs.window.focusedWindow()
+  if win then
+    local screenId = wf_new._safeGetScreenId(win)
+    assertIsNumber(screenId)
+    assertGreaterThan(0, screenId)
+  end
+  return success()
+end
+
+local function testSafeGetScreenIdWithNil()
+  local screenId = wf_new._safeGetScreenId(nil)
+  assertIsEqual(0, screenId)
+  return success()
+end
+
+local function testConfigExists()
+  assertIsNotNil(wf_new._config)
+  assertIsNumber(wf_new._config.RETRY_DELAY)
+  assertIsNumber(wf_new._config.MAX_RETRIES)
+  assertIsTable(wf_new._config.ALLOWED_ROLES)
+  return success()
+end
+
+-- ============================================================================
+-- STEP 2: WINDOWINFO TESTS
+-- ============================================================================
+
+local function testWindowInfoCreation()
+  local win = hs.window.focusedWindow()
+  if not win then
+    print("    SKIP: No focused window")
+    return success()
+  end
+  local info = wf_new._WindowInfo.new(win)
+  assertIsNotNil(info)
+  assertIsNumber(info.id)
+  assertIsString(info.title)
+  assertIsString(info.role)
+  assertIsBoolean(info.isVisible)
+  assertIsBoolean(info.isMinimized)
+  assertIsBoolean(info.isFullscreen)
+  assertIsBoolean(info.hasTitlebar)
+  assertIsNumber(info.timeCreated)
+  assertIsEqual(0, info.timeFocused)
+  return success()
+end
+
+local function testWindowInfoWithNil()
+  local info = wf_new._WindowInfo.new(nil)
+  assertIsNil(info)
+  return success()
+end
+
+local function testWindowInfoRefresh()
+  local win = hs.window.focusedWindow()
+  if not win then
+    print("    SKIP: No focused window")
+    return success()
+  end
+  local info = wf_new._WindowInfo.new(win)
+  local refreshed = info:refresh()
+  assertTrue(refreshed)
+  return success()
+end
+
+local function testWindowInfoToString()
+  local win = hs.window.focusedWindow()
+  if not win then
+    print("    SKIP: No focused window")
+    return success()
+  end
+  local info = wf_new._WindowInfo.new(win)
+  local str = tostring(info)
+  assertIsString(str)
+  assertTrue(string.find(str, "WindowInfo") ~= nil)
+  return success()
+end
+
+-- ============================================================================
+-- STEP 2: APPINFO TESTS
+-- ============================================================================
+
+local function testAppInfoCreation()
+  local app = hs.application.frontmostApplication()
+  if not app then
+    print("    SKIP: No frontmost app")
+    return success()
+  end
+  local info = wf_new._AppInfo.new(app, app:pid())
+  assertIsNotNil(info)
+  assertIsNumber(info.pid)
+  assertIsString(info.name)
+  assertIsString(info.bundleID)
+  assertIsBoolean(info.isHidden)
+  assertIsBoolean(info.isFrontmost)
+  assertIsTable(info.windows)
+  return success()
+end
+
+local function testAppInfoWithNil()
+  local info = wf_new._AppInfo.new(nil)
+  assertIsNil(info)
+  return success()
+end
+
+local function testAppInfoRefresh()
+  local app = hs.application.frontmostApplication()
+  if not app then
+    print("    SKIP: No frontmost app")
+    return success()
+  end
+  local info = wf_new._AppInfo.new(app, app:pid())
+  local refreshed = info:refresh()
+  assertTrue(refreshed)
+  return success()
+end
+
+local function testAppInfoToString()
+  local app = hs.application.frontmostApplication()
+  if not app then
+    print("    SKIP: No frontmost app")
+    return success()
+  end
+  local info = wf_new._AppInfo.new(app, app:pid())
+  local str = tostring(info)
+  assertIsString(str)
+  assertTrue(string.find(str, "AppInfo") ~= nil)
+  return success()
+end
+
+-- ============================================================================
+-- STEP 3: FILTERRULES TESTS
+-- ============================================================================
+
+local function testFilterRulesCreation()
+  local rules = wf_new._FilterRules.new()
+  assertIsNotNil(rules)
+  assertIsNil(rules.override)
+  assertIsTable(rules.appRules)
+  assertIsNil(rules.default)
+  return success()
+end
+
+local function testFilterRulesToString()
+  local rules = wf_new._FilterRules.new()
+  local str = tostring(rules)
+  assertIsString(str)
+  assertTrue(string.find(str, "FilterRules") ~= nil)
+  return success()
+end
+
+-- ============================================================================
+-- STEP 3: FILTER TESTS
+-- ============================================================================
+
+local function testFilterMatchesWithNoRules()
+  local rules = wf_new._FilterRules.new()
+  local windowInfo = {appName = "TestApp", isVisible = true}
+  local allowed, reason = wf_new._Filter.matches(rules, windowInfo, {})
+  assertTrue(allowed)
+  return success()
+end
+
+local function testFilterMatchesOverrideFalse()
+  local rules = wf_new._FilterRules.new()
+  rules.override = false
+  local windowInfo = {appName = "TestApp", isVisible = true}
+  local allowed, reason = wf_new._Filter.matches(rules, windowInfo, {})
+  assertFalse(allowed)
+  assertTrue(string.find(reason, "override") ~= nil)
+  return success()
+end
+
+local function testFilterMatchesAppRejected()
+  local rules = wf_new._FilterRules.new()
+  rules.appRules["TestApp"] = false
+  local windowInfo = {appName = "TestApp", isVisible = true}
+  local allowed, reason = wf_new._Filter.matches(rules, windowInfo, {})
+  assertFalse(allowed)
+  assertTrue(string.find(reason, "app rejected") ~= nil)
+  return success()
+end
+
+local function testFilterMatchesDefaultFalse()
+  local rules = wf_new._FilterRules.new()
+  rules.default = false
+  local windowInfo = {appName = "TestApp", isVisible = true}
+  local allowed, reason = wf_new._Filter.matches(rules, windowInfo, {})
+  assertFalse(allowed)
+  return success()
+end
+
+local function testFilterMatchesRuleVisible()
+  local rule = {visible = true}
+  local windowInfo = {isVisible = true, role = "AXStandardWindow"}
+  local allowed = wf_new._Filter.matchesRule(rule, windowInfo, {})
+  assertTrue(allowed)
+
+  windowInfo.isVisible = false
+  allowed = wf_new._Filter.matchesRule(rule, windowInfo, {})
+  assertFalse(allowed)
+  return success()
+end
+
+local function testFilterMatchesRuleAllowTitlesNumber()
+  local rule = {allowTitles = 3}
+  local windowInfo = {title = "Hello", role = "AXStandardWindow"}
+  local allowed = wf_new._Filter.matchesRule(rule, windowInfo, {})
+  assertTrue(allowed)
+
+  windowInfo.title = "Hi"
+  allowed = wf_new._Filter.matchesRule(rule, windowInfo, {})
+  assertFalse(allowed)
+  return success()
+end
+
+local function testFilterMatchesRuleAllowTitlesPattern()
+  local rule = {allowTitles = "Console"}
+  local windowInfo = {title = "Hammerspoon Console", role = "AXStandardWindow"}
+  local allowed = wf_new._Filter.matchesRule(rule, windowInfo, {})
+  assertTrue(allowed)
+
+  windowInfo.title = "Safari"
+  allowed = wf_new._Filter.matchesRule(rule, windowInfo, {})
+  assertFalse(allowed)
+  return success()
+end
+
+local function testFilterMatchesRuleRejectTitles()
+  local rule = {rejectTitles = "Untitled"}
+  local windowInfo = {title = "My Document", role = "AXStandardWindow"}
+  local allowed = wf_new._Filter.matchesRule(rule, windowInfo, {})
+  assertTrue(allowed)
+
+  windowInfo.title = "Untitled"
+  allowed = wf_new._Filter.matchesRule(rule, windowInfo, {})
+  assertFalse(allowed)
+  return success()
+end
+
+local function testFilterMatchesRuleFocused()
+  local rule = {focused = true}
+  local windowInfo = {id = 123, role = "AXStandardWindow"}
+  local context = {focusedWindowId = 123}
+  local allowed = wf_new._Filter.matchesRule(rule, windowInfo, context)
+  assertTrue(allowed)
+
+  context.focusedWindowId = 456
+  allowed = wf_new._Filter.matchesRule(rule, windowInfo, context)
+  assertFalse(allowed)
+  return success()
+end
+
+local function testFilterMatchesRuleAllowRolesStar()
+  local rule = {allowRoles = '*'}
+  local windowInfo = {role = "AnyRole"}
+  local allowed = wf_new._Filter.matchesRule(rule, windowInfo, {})
+  assertTrue(allowed)
+  return success()
+end
+
+local function testFilterMatchesRegions()
+  local frame = hs.geometry.rect(100, 100, 200, 200)
+  local region = hs.geometry.rect(0, 0, 500, 500)
+  local matches = wf_new._Filter.matchesRegions({region}, frame)
+  assertTrue(matches)
+
+  local farRegion = hs.geometry.rect(1000, 1000, 100, 100)
+  matches = wf_new._Filter.matchesRegions({farRegion}, frame)
+  assertFalse(matches)
+  return success()
+end
+
+local function testFilterResolveScreens()
+  local mainScreen = hs.screen.mainScreen()
+  if not mainScreen then
+    print("    SKIP: No main screen")
+    return success()
+  end
+  local ids = wf_new._Filter.resolveScreens(mainScreen)
+  assertIsTable(ids)
+  assertTrue(ids[mainScreen:id()])
+  return success()
+end
+
+-- ============================================================================
+-- STEP 4: PREFILTER TESTS
+-- ============================================================================
+
+local function testPreFilterShouldTrackAppWithValidApp()
+  local app = hs.application.frontmostApplication()
+  if not app then
+    print("    SKIP: No frontmost app")
+    return success()
+  end
+  local config = wf_new._PreFilter.defaultConfig()
+  local shouldTrack, reason = wf_new._PreFilter.shouldTrackApp(app, config)
+  assertTrue(shouldTrack)
+  return success()
+end
+
+local function testPreFilterShouldTrackAppWithNil()
+  local config = wf_new._PreFilter.defaultConfig()
+  local shouldTrack, reason = wf_new._PreFilter.shouldTrackApp(nil, config)
+  assertFalse(shouldTrack)
+  return success()
+end
+
+local function testPreFilterShouldTrackAppBlacklisted()
+  local app = hs.application.frontmostApplication()
+  if not app then
+    print("    SKIP: No frontmost app")
+    return success()
+  end
+  local config = wf_new._PreFilter.defaultConfig()
+  config.ignoreAppNames[app:name()] = true
+  local shouldTrack, reason = wf_new._PreFilter.shouldTrackApp(app, config)
+  assertFalse(shouldTrack)
+  assertTrue(string.find(reason, "blacklisted") ~= nil)
+  return success()
+end
+
+local function testPreFilterShouldTrackWithValidWindow()
+  local win = hs.window.focusedWindow()
+  if not win then
+    print("    SKIP: No focused window")
+    return success()
+  end
+  local config = wf_new._PreFilter.defaultConfig()
+  local shouldTrack, reason = wf_new._PreFilter.shouldTrack(win, nil, config)
+  assertTrue(shouldTrack)
+  return success()
+end
+
+local function testPreFilterShouldTrackWithNil()
+  local config = wf_new._PreFilter.defaultConfig()
+  local shouldTrack, reason = wf_new._PreFilter.shouldTrack(nil, nil, config)
+  assertFalse(shouldTrack)
+  return success()
+end
+
+local function testPreFilterDefaultConfig()
+  local config = wf_new._PreFilter.defaultConfig()
+  assertIsTable(config)
+  assertIsTable(config.ignoreBundleIDs)
+  assertIsTable(config.ignoreAppNames)
+  assertIsString(config.ignoreAppPattern)
+  assertFalse(config.requireTitle)
+  assertFalse(config.requireRole)
+  return success()
+end
+
+-- ============================================================================
+-- STEP 5: EVENT CONSTANTS TESTS
+-- ============================================================================
+
+local function testEventConstantsExist()
+  assertIsString(wf_new.windowCreated)
+  assertIsString(wf_new.windowDestroyed)
+  assertIsString(wf_new.windowFocused)
+  assertIsString(wf_new.windowUnfocused)
+  assertIsString(wf_new.windowMoved)
+  assertIsString(wf_new.windowMinimized)
+  assertIsString(wf_new.windowUnminimized)
+  assertIsString(wf_new.windowHidden)
+  assertIsString(wf_new.windowUnhidden)
+  assertIsString(wf_new.windowVisible)
+  assertIsString(wf_new.windowNotVisible)
+  assertIsString(wf_new.windowTitleChanged)
+  assertIsString(wf_new.windowAllowed)
+  assertIsString(wf_new.windowRejected)
+  assertIsString(wf_new.hasWindow)
+  assertIsString(wf_new.hasNoWindows)
+  assertIsString(wf_new.windowsChanged)
+  return success()
+end
+
+local function testSortOrderConstantsExist()
+  assertIsString(wf_new.sortByFocused)
+  assertIsString(wf_new.sortByFocusedLast)
+  assertIsString(wf_new.sortByCreated)
+  assertIsString(wf_new.sortByCreatedLast)
+  return success()
+end
+
+local function testIsValidEvent()
+  assertTrue(wf_new._isValidEvent(wf_new.windowFocused))
+  assertTrue(wf_new._isValidEvent(wf_new.windowCreated))
+  assertFalse(wf_new._isValidEvent("notAnEvent"))
+  assertFalse(wf_new._isValidEvent(nil))
+  return success()
+end
+
+-- ============================================================================
+-- STEP 5: SUBSCRIPTIONS TESTS
+-- ============================================================================
+
+local function testSubscriptionsCreation()
+  local subs = wf_new._Subscriptions.new()
+  assertIsNotNil(subs)
+  assertFalse(subs:hasAny())
+  assertIsEqual(0, subs:count())
+  return success()
+end
+
+local function testSubscriptionsAdd()
+  local subs = wf_new._Subscriptions.new()
+  local fn = function() end
+  local added = subs:add(wf_new.windowFocused, fn)
+  assertTrue(added)
+  assertTrue(subs:hasAny())
+  assertTrue(subs:hasEvent(wf_new.windowFocused))
+  assertIsEqual(1, subs:count(wf_new.windowFocused))
+  return success()
+end
+
+local function testSubscriptionsAddDuplicate()
+  local subs = wf_new._Subscriptions.new()
+  local fn = function() end
+  subs:add(wf_new.windowFocused, fn)
+  local added = subs:add(wf_new.windowFocused, fn)
+  assertFalse(added)
+  assertIsEqual(1, subs:count(wf_new.windowFocused))
+  return success()
+end
+
+local function testSubscriptionsAddInvalidEvent()
+  local subs = wf_new._Subscriptions.new()
+  assertErrorContains(function()
+    subs:add("invalidEvent", function() end)
+  end, "invalid event")
+  return success()
+end
+
+local function testSubscriptionsAddNonFunction()
+  local subs = wf_new._Subscriptions.new()
+  assertErrorContains(function()
+    subs:add(wf_new.windowFocused, "not a function")
+  end, "must be a function")
+  return success()
+end
+
+local function testSubscriptionsRemove()
+  local subs = wf_new._Subscriptions.new()
+  local fn = function() end
+  subs:add(wf_new.windowFocused, fn)
+  local removed = subs:remove(wf_new.windowFocused, fn)
+  assertTrue(removed)
+  assertFalse(subs:hasAny())
+  return success()
+end
+
+local function testSubscriptionsRemoveNotFound()
+  local subs = wf_new._Subscriptions.new()
+  local fn = function() end
+  local removed = subs:remove(wf_new.windowFocused, fn)
+  assertFalse(removed)
+  return success()
+end
+
+local function testSubscriptionsRemoveAll()
+  local subs = wf_new._Subscriptions.new()
+  subs:add(wf_new.windowFocused, function() end)
+  subs:add(wf_new.windowCreated, function() end)
+  local count = subs:removeAll()
+  assertIsEqual(2, count)
+  assertFalse(subs:hasAny())
+  return success()
+end
+
+local function testSubscriptionsRemoveAllForEvent()
+  local subs = wf_new._Subscriptions.new()
+  subs:add(wf_new.windowFocused, function() end)
+  subs:add(wf_new.windowFocused, function() end)
+  subs:add(wf_new.windowCreated, function() end)
+  local count = subs:removeAll(wf_new.windowFocused)
+  assertIsEqual(2, count)
+  assertTrue(subs:hasAny())
+  assertFalse(subs:hasEvent(wf_new.windowFocused))
+  assertTrue(subs:hasEvent(wf_new.windowCreated))
+  return success()
+end
+
+local function testSubscriptionsEmit()
+  local subs = wf_new._Subscriptions.new()
+  local callCount = 0
+  local receivedArgs = {}
+  subs:add(wf_new.windowFocused, function(win, app, ev)
+    callCount = callCount + 1
+    receivedArgs = {win = win, app = app, ev = ev}
+  end)
+  local emitted = subs:emit(wf_new.windowFocused, "testWin", "TestApp")
+  assertIsEqual(1, emitted)
+  assertIsEqual(1, callCount)
+  assertIsEqual("testWin", receivedArgs.win)
+  assertIsEqual("TestApp", receivedArgs.app)
+  assertIsEqual(wf_new.windowFocused, receivedArgs.ev)
+  return success()
+end
+
+local function testSubscriptionsEmitMultiple()
+  local subs = wf_new._Subscriptions.new()
+  local total = 0
+  subs:add(wf_new.windowFocused, function() total = total + 1 end)
+  subs:add(wf_new.windowFocused, function() total = total + 10 end)
+  subs:emit(wf_new.windowFocused, nil, nil)
+  assertIsEqual(11, total)
+  return success()
+end
+
+local function testSubscriptionsEmitWithError()
+  local subs = wf_new._Subscriptions.new()
+  local goodCalled = false
+  subs:add(wf_new.windowFocused, function() error("intentional") end)
+  subs:add(wf_new.windowFocused, function() goodCalled = true end)
+  -- Should not throw, should continue to next callback
+  local emitted = subs:emit(wf_new.windowFocused, nil, nil)
+  assertIsEqual(2, emitted)
+  assertTrue(goodCalled)
+  return success()
+end
+
+local function testSubscriptionsEmitNoCallbacks()
+  local subs = wf_new._Subscriptions.new()
+  local emitted = subs:emit(wf_new.windowFocused, nil, nil)
+  assertIsEqual(0, emitted)
+  return success()
+end
+
+local function testSubscriptionsSelfUnsubscribe()
+  local subs = wf_new._Subscriptions.new()
+  local fn1
+  fn1 = function()
+    subs:remove(wf_new.windowFocused, fn1)
+  end
+  local fn2Called = false
+  local fn2 = function() fn2Called = true end
+  subs:add(wf_new.windowFocused, fn1)
+  subs:add(wf_new.windowFocused, fn2)
+  subs:emit(wf_new.windowFocused, nil, nil)
+  assertTrue(fn2Called)
+  assertIsEqual(1, subs:count(wf_new.windowFocused))
+  return success()
+end
+
+local function testSubscriptionsToString()
+  local subs = wf_new._Subscriptions.new()
+  subs:add(wf_new.windowFocused, function() end)
+  local str = tostring(subs)
+  assertIsString(str)
+  assertTrue(string.find(str, "Subscriptions") ~= nil)
+  return success()
+end
+
+-- ============================================================================
+-- RUN ALL TESTS
+-- ============================================================================
+
+local function runAllTests()
+  print("\n" .. string.rep("=", 60))
+  print("window_filter_new.lua Internal Component Tests")
+  print(string.rep("=", 60))
+
+  testResults.passed = 0
+  testResults.failed = 0
+  testResults.errors = {}
+
+  -- Step 1: Utilities
+  print("\nStep 1: Utilities")
+  runTest("testSafeCallWithValidFunction", testSafeCallWithValidFunction)
+  runTest("testSafeCallWithNilFunction", testSafeCallWithNilFunction)
+  runTest("testSafeCallWithError", testSafeCallWithError)
+  runTest("testSafeGetScreenIdWithWindow", testSafeGetScreenIdWithWindow)
+  runTest("testSafeGetScreenIdWithNil", testSafeGetScreenIdWithNil)
+  runTest("testConfigExists", testConfigExists)
+
+  -- Step 2: WindowInfo
+  print("\nStep 2: WindowInfo")
+  runTest("testWindowInfoCreation", testWindowInfoCreation)
+  runTest("testWindowInfoWithNil", testWindowInfoWithNil)
+  runTest("testWindowInfoRefresh", testWindowInfoRefresh)
+  runTest("testWindowInfoToString", testWindowInfoToString)
+
+  -- Step 2: AppInfo
+  print("\nStep 2: AppInfo")
+  runTest("testAppInfoCreation", testAppInfoCreation)
+  runTest("testAppInfoWithNil", testAppInfoWithNil)
+  runTest("testAppInfoRefresh", testAppInfoRefresh)
+  runTest("testAppInfoToString", testAppInfoToString)
+
+  -- Step 3: FilterRules
+  print("\nStep 3: FilterRules")
+  runTest("testFilterRulesCreation", testFilterRulesCreation)
+  runTest("testFilterRulesToString", testFilterRulesToString)
+
+  -- Step 3: Filter
+  print("\nStep 3: Filter")
+  runTest("testFilterMatchesWithNoRules", testFilterMatchesWithNoRules)
+  runTest("testFilterMatchesOverrideFalse", testFilterMatchesOverrideFalse)
+  runTest("testFilterMatchesAppRejected", testFilterMatchesAppRejected)
+  runTest("testFilterMatchesDefaultFalse", testFilterMatchesDefaultFalse)
+  runTest("testFilterMatchesRuleVisible", testFilterMatchesRuleVisible)
+  runTest("testFilterMatchesRuleAllowTitlesNumber", testFilterMatchesRuleAllowTitlesNumber)
+  runTest("testFilterMatchesRuleAllowTitlesPattern", testFilterMatchesRuleAllowTitlesPattern)
+  runTest("testFilterMatchesRuleRejectTitles", testFilterMatchesRuleRejectTitles)
+  runTest("testFilterMatchesRuleFocused", testFilterMatchesRuleFocused)
+  runTest("testFilterMatchesRuleAllowRolesStar", testFilterMatchesRuleAllowRolesStar)
+  runTest("testFilterMatchesRegions", testFilterMatchesRegions)
+  runTest("testFilterResolveScreens", testFilterResolveScreens)
+
+  -- Step 4: PreFilter
+  print("\nStep 4: PreFilter")
+  runTest("testPreFilterShouldTrackAppWithValidApp", testPreFilterShouldTrackAppWithValidApp)
+  runTest("testPreFilterShouldTrackAppWithNil", testPreFilterShouldTrackAppWithNil)
+  runTest("testPreFilterShouldTrackAppBlacklisted", testPreFilterShouldTrackAppBlacklisted)
+  runTest("testPreFilterShouldTrackWithValidWindow", testPreFilterShouldTrackWithValidWindow)
+  runTest("testPreFilterShouldTrackWithNil", testPreFilterShouldTrackWithNil)
+  runTest("testPreFilterDefaultConfig", testPreFilterDefaultConfig)
+
+  -- Step 5: Events
+  print("\nStep 5: Events")
+  runTest("testEventConstantsExist", testEventConstantsExist)
+  runTest("testSortOrderConstantsExist", testSortOrderConstantsExist)
+  runTest("testIsValidEvent", testIsValidEvent)
+
+  -- Step 5: Subscriptions
+  print("\nStep 5: Subscriptions")
+  runTest("testSubscriptionsCreation", testSubscriptionsCreation)
+  runTest("testSubscriptionsAdd", testSubscriptionsAdd)
+  runTest("testSubscriptionsAddDuplicate", testSubscriptionsAddDuplicate)
+  runTest("testSubscriptionsAddInvalidEvent", testSubscriptionsAddInvalidEvent)
+  runTest("testSubscriptionsAddNonFunction", testSubscriptionsAddNonFunction)
+  runTest("testSubscriptionsRemove", testSubscriptionsRemove)
+  runTest("testSubscriptionsRemoveNotFound", testSubscriptionsRemoveNotFound)
+  runTest("testSubscriptionsRemoveAll", testSubscriptionsRemoveAll)
+  runTest("testSubscriptionsRemoveAllForEvent", testSubscriptionsRemoveAllForEvent)
+  runTest("testSubscriptionsEmit", testSubscriptionsEmit)
+  runTest("testSubscriptionsEmitMultiple", testSubscriptionsEmitMultiple)
+  runTest("testSubscriptionsEmitWithError", testSubscriptionsEmitWithError)
+  runTest("testSubscriptionsEmitNoCallbacks", testSubscriptionsEmitNoCallbacks)
+  runTest("testSubscriptionsSelfUnsubscribe", testSubscriptionsSelfUnsubscribe)
+  runTest("testSubscriptionsToString", testSubscriptionsToString)
+
+  -- Summary
+  print("\n" .. string.rep("=", 60))
+  print(string.format("Results: %d passed, %d failed", testResults.passed, testResults.failed))
+  print(string.rep("=", 60))
+
+  if #testResults.errors > 0 then
+    print("\nFailed tests:")
+    for _, err in ipairs(testResults.errors) do
+      print(string.format("  - %s: %s", err.name, err.error))
+    end
+  end
+
+  return testResults.failed == 0
+end
+
+-- Run tests when file is loaded
+local allPassed = runAllTests()
+return allPassed and "All tests passed" or "Some tests failed"
