@@ -1056,80 +1056,148 @@ windowfilter._PreFilter = PreFilter
 ----------------------------------------------------------------------
 -- Event Constants
 ----------------------------------------------------------------------
--- All events that can be subscribed to via windowfilter:subscribe().
--- These match the current implementation exactly for API compatibility.
 
---- Event: a new window was created
+--- hs.window.filter.windowCreated
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a new window was created
 windowfilter.windowCreated = 'windowCreated'
 
---- Event: a window was destroyed
+--- hs.window.filter.windowDestroyed
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window was destroyed
 windowfilter.windowDestroyed = 'windowDestroyed'
 
---- Event: a window was moved or resized, including toggling fullscreen/maximize
+--- hs.window.filter.windowMoved
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window was moved or resized, including toggling fullscreen/maximize
 windowfilter.windowMoved = 'windowMoved'
 
---- Event: a window was expanded to fullscreen
+--- hs.window.filter.windowFullscreened
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window was expanded to fullscreen
 windowfilter.windowFullscreened = 'windowFullscreened'
 
---- Event: a window was reverted back from fullscreen
+--- hs.window.filter.windowUnfullscreened
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window was reverted back from fullscreen
 windowfilter.windowUnfullscreened = 'windowUnfullscreened'
 
---- Event: a window was minimized
+--- hs.window.filter.windowMinimized
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window was minimized
 windowfilter.windowMinimized = 'windowMinimized'
 
---- Event: a window was unminimized
+--- hs.window.filter.windowUnminimized
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window was unminimized
 windowfilter.windowUnminimized = 'windowUnminimized'
 
---- Event: a window was unhidden (app was unhidden via cmd-h)
+--- hs.window.filter.windowUnhidden
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window was unhidden (its app was unhidden, e.g. via `cmd-h`)
 windowfilter.windowUnhidden = 'windowUnhidden'
 
---- Event: a window was hidden (app was hidden via cmd-h)
+--- hs.window.filter.windowHidden
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window was hidden (its app was hidden, e.g. via `cmd-h`)
 windowfilter.windowHidden = 'windowHidden'
 
---- Event: a window became visible (in any Mission Control Space)
+--- hs.window.filter.windowVisible
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window became "visible" (in *any* Mission Control Space, as per `hs.window:isVisible()`)
+--- after having been hidden or minimized, or if it was just created
 windowfilter.windowVisible = 'windowVisible'
 
---- Event: a window is no longer visible (in any Mission Control Space)
+--- hs.window.filter.windowNotVisible
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window is no longer "visible" (in *any* Mission Control Space, as per `hs.window:isVisible()`)
+--- because it was minimized or closed, or its application was hidden (e.g. via `cmd-h`) or closed
 windowfilter.windowNotVisible = 'windowNotVisible'
 
---- Event: a window is now in the current Mission Control Space
+--- hs.window.filter.windowInCurrentSpace
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window is now in the current Mission Control Space, due to
+--- a Space switch or because it was hidden or minimized (hidden and minimized windows belong to all Spaces)
 windowfilter.windowInCurrentSpace = 'windowInCurrentSpace'
 
---- Event: a window is no longer in the current Mission Control Space
+--- hs.window.filter.windowNotInCurrentSpace
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window that used to be in the current Mission Control Space isn't anymore,
+--- due to a Space switch or because it was unhidden or unminimized onto another Space
 windowfilter.windowNotInCurrentSpace = 'windowNotInCurrentSpace'
 
---- Event: a window became actually visible on screen
+--- hs.window.filter.windowOnScreen
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window became *actually* visible on screen (i.e. it's "visible" as per `hs.window:isVisible()`
+--- *and* in the current Mission Control Space) after having been not visible, or when created
 windowfilter.windowOnScreen = 'windowOnScreen'
 
---- Event: a window is no longer actually visible on any screen
+--- hs.window.filter.windowNotOnScreen
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window is no longer *actually* visible on any screen because it was minimized, closed,
+--- its application was hidden (e.g. via cmd-h) or closed, or because it's not in the current Mission Control Space anymore
 windowfilter.windowNotOnScreen = 'windowNotOnScreen'
 
---- Event: a window received focus
+--- hs.window.filter.windowFocused
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window received focus
 windowfilter.windowFocused = 'windowFocused'
 
---- Event: a window lost focus
+--- hs.window.filter.windowUnfocused
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window lost focus
 windowfilter.windowUnfocused = 'windowUnfocused'
 
---- Event: a window's title changed
+--- hs.window.filter.windowTitleChanged
+--- Constant
+--- Event for `hs.window.filter:subscribe()`: a window's title changed
 windowfilter.windowTitleChanged = 'windowTitleChanged'
 
---- Pseudo-event: a previously rejected window is now allowed
---- Emitted before the actual event that caused the window to be allowed
+--- hs.window.filter.windowAllowed
+--- Constant
+--- Pseudo-event for `hs.window.filter:subscribe()`: a previously rejected window (or a newly created one) is now allowed
+---
+--- Notes:
+---  * this pseudo-event will be emitted *before* the *actual* event(s) (e.g. `windowCreated`) that caused the window to be allowed
 windowfilter.windowAllowed = 'windowAllowed'
 
---- Pseudo-event: a previously allowed window is now rejected
---- Emitted after the actual event that caused the window to be rejected
+--- hs.window.filter.windowRejected
+--- Constant
+--- Pseudo-event for `hs.window.filter:subscribe()`: a previously allowed window (or a window that's been destroyed) is now rejected
+---
+--- Notes:
+---  * this pseudo-event will be emitted *after* the *actual* event(s) (e.g. `windowDestroyed`) that caused the window to be rejected
 windowfilter.windowRejected = 'windowRejected'
 
---- Pseudo-event: the windowfilter now allows one window (was empty before)
---- Emitted after the actual event that caused a window to be allowed
+--- hs.window.filter.hasWindow
+--- Constant
+--- Pseudo-event for `hs.window.filter:subscribe()`: the windowfilter now allows one window
+---
+--- Notes:
+---  * callbacks for this event will receive (as the first argument) the window that is now allowed
+---  * this pseudo-event won't trigger again until after the windowfilter reverts to rejecting all windows
+---  * this pseudo-event will be emitted *after* the *actual* event(s) (e.g. `windowCreated`) that caused a window to be allowed
 windowfilter.hasWindow = 'hasWindow'
 
---- Pseudo-event: the windowfilter now rejects all windows (was non-empty before)
---- Emitted after the actual event that caused the last window to be rejected
+--- hs.window.filter.hasNoWindows
+--- Constant
+--- Pseudo-event for `hs.window.filter:subscribe()`: the windowfilter now rejects all windows
+---
+--- Notes:
+---  * callbacks for this event will receive (as the first argument) the last window that was allowed (and is now rejected)
+---  * this pseudo-event won't trigger again until after the windowfilter allows at least one window
+---  * this pseudo-event will be emitted *after* the *actual* event(s) (e.g. `windowDestroyed`) that caused the window to be rejected
 windowfilter.hasNoWindows = 'hasNoWindows'
 
---- Pseudo-event: the list of allowed windows has changed
+--- hs.window.filter.windowsChanged
+--- Constant
+--- Pseudo-event for `hs.window.filter:subscribe()`: the list of allowed windows (as per `windowfilter:getWindows()`) has changed
+---
+--- Notes:
+---  * callbacks for this event will receive (as the first argument) either a random window among the currently allowed ones,
+---    or nil if the windowfilter is rejecting all windows
+---  * similarly, the second argument passed to callbacks (window's app name) will be nil if the windowfilter is rejecting all windows
+---  * this pseudo-event will be emitted *after* the *actual* event(s) that caused the list of allowed windows to change
 windowfilter.windowsChanged = 'windowsChanged'
 
 -- Set of all valid events for validation
@@ -1173,18 +1241,28 @@ windowfilter._isValidEvent = isValidEvent
 ----------------------------------------------------------------------
 -- Sort Order Constants
 ----------------------------------------------------------------------
--- Constants for getWindows() sort order parameter.
 
---- Sort by focus time, most recently focused first
+--- hs.window.filter.sortByFocusedLast
+--- Constant
+--- Sort order for `hs.window.filter:getWindows()`: windows are sorted in order of focus received, most recently first (see also `hs.window.filter:setSortOrder()`)
+---
+--- Notes:
+---  * This is the default sort order for all windowfilters
 windowfilter.sortByFocusedLast = 'focusedLast'
 
---- Sort by focus time, least recently focused first
+--- hs.window.filter.sortByFocused
+--- Constant
+--- Sort order for `hs.window.filter:getWindows()`: windows are sorted in order of focus received, least recently first (see also `hs.window.filter:setSortOrder()`)
 windowfilter.sortByFocused = 'focused'
 
---- Sort by creation time, most recently created first
+--- hs.window.filter.sortByCreatedLast
+--- Constant
+--- Sort order for `hs.window.filter:getWindows()`: windows are sorted in order of creation, newest first (see also `hs.window.filter:setSortOrder()`)
 windowfilter.sortByCreatedLast = 'createdLast'
 
---- Sort by creation time, oldest first
+--- hs.window.filter.sortByCreated
+--- Constant
+--- Sort order for `hs.window.filter:getWindows()`: windows are sorted in order of creation, oldest first (see also `hs.window.filter:setSortOrder()`)
 windowfilter.sortByCreated = 'created'
 
 ----------------------------------------------------------------------
@@ -2344,9 +2422,24 @@ end
 -- Expose for testing
 windowfilter._Manager = Manager
 
---- Module variable to control space change behavior.
---- If true, all active instances refresh on space change.
---- If false (default), only space-aware instances refresh.
+--- hs.window.filter.forceRefreshOnSpaceChange
+--- Variable
+--- Tells all windowfilters whether to refresh all windows when the user switches to a different Mission Control Space.
+---
+--- Due to OS X limitations Hammerspoon cannot directly query for windows in Spaces other than the current one;
+--- therefore when a windowfilter is initially instantiated, it doesn't know about many of these windows.
+---
+--- If this variable is set to `true`, windowfilters will re-query applications for all their windows whenever a Space change
+--- by the user is detected, therefore any existing windows in that Space that were not yet being tracked will become known at that point;
+--- if `false` (the default) this won't happen, but the windowfilters will *eventually* learn about these windows
+--- anyway, as soon as they're interacted with.
+---
+--- If you need your windowfilters to become aware of windows across all Spaces as soon as possible, you can set this to `true`,
+--- but you'll incur a modest performance penalty on every Space change. If possible, use the `hs.window.filter.switchedToSpace()`
+--- callback instead.
+---
+--- Notes:
+---  * If you defined one or more Spaces-aware windowfilters (i.e. when the `currentSpace` field of a filter is present), windows need refreshing at every space change anyway, so this variable is ignored
 windowfilter.forceRefreshOnSpaceChange = false
 
 ----------------------------------------------------------------------
@@ -2455,37 +2548,86 @@ end
 -- Filter Configuration Methods (all return self for chaining)
 ----------------------------------------------------------------------
 
---- Set filter rules for a specific app.
---- @param appName string Application name
---- @param rules boolean|table Filter rules
---- @return table self
+--- hs.window.filter:setAppFilter(appname, filter) -> hs.window.filter object
+--- Method
+--- Sets the detailed filtering rules for the windows of a specific app
+---
+--- Parameters:
+---  * appname - app name as per `hs.application:name()`
+---  * filter - if `false`, reject the app; if `true`, `nil`, or omitted, allow all visible windows (in any Space) for the app; otherwise it must be a table describing the filtering rules for the app, via the following fields:
+---    * visible - if `true`, only allow visible windows (in any Space); if `false`, reject visible windows; if omitted, this rule is ignored
+---    * currentSpace - if `true`, only allow windows in the current Mission Control Space (minimized and hidden windows are included, as they're considered to belong to all Spaces); if `false`, reject windows in the current Space (including all minimized and hidden windows); if omitted, this rule is ignored
+---    * fullscreen - if `true`, only allow fullscreen windows; if `false`, reject fullscreen windows; if omitted, this rule is ignored
+---    * hasTitlebar - if `true`, only allow windows with titlebar; if `false`, reject window with titlebar; if omitted, this rule is ignored
+---    * focused - if `true`, only allow a window while focused; if `false`, reject the focused window; if omitted, this rule is ignored
+---    * activeApplication - only allow any of this app's windows while it is (if `true`) or it's not (if `false`) the active application; if omitted, this rule is ignored
+---    * allowTitles - if a number, only allow windows whose title is at least as many characters long; if a string or table of strings, only allow windows whose title matches (one of) the pattern(s) as per `string.match`; if omitted, this rule is ignored
+---    * rejectTitles - if a string or table of strings, reject windows whose titles matches (one of) the pattern(s) as per `string.match`; if omitted, this rule is ignored
+---    * allowRegions - an `hs.geometry` rect or constructor argument, or a list of them, designating (a) screen "region(s)" in absolute coordinates: only allow windows that "cover" at least 50% of (one of) the region(s), and/or windows that have at least 50% of their surface inside (one of) the region(s); if omitted, this rule is ignored
+---    * rejectRegions - an `hs.geometry` rect or constructor argument, or a list of them, designating (a) screen "region(s)" in absolute coordinates: reject windows that "cover" at least 50% of (one of) the region(s), and/or windows that have at least 50% of their surface inside (one of) the region(s); if omitted, this rule is ignored
+---    * allowScreens - a valid argument for `hs.screen.find()`, or a list of them, indicating one (or more) screen(s): only allow windows that (mostly) lie on (one of) the screen(s); if omitted, this rule is ignored
+---    * rejectScreens - a valid argument for `hs.screen.find()`, or a list of them, indicating one (or more) screen(s): reject windows that (mostly) lie on (one of) the screen(s); if omitted, this rule is ignored
+---    * allowRoles - if a string or table of strings, only allow these window roles as per `hs.window:subrole()`; if the special string `'*'`, all window roles are allowed; if omitted, use the default allowed roles (defined in `hs.window.filter.allowedWindowRoles`)
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
+---
+--- Notes:
+---  * Passing `focused=true` in `filter` will (naturally) result in the windowfilter ever allowing 1 window at most
+---  * If you want to allow *all* windows for an app, including invisible ones, pass an empty table for `filter`
 function WindowFilter:setAppFilter(appName, rules)
   self._filter:setAppFilter(appName, rules)
   self:_refreshAllWindows()
   return self
 end
 
---- Set the default filter for apps without specific rules.
---- @param rules boolean|table Filter rules
---- @return table self
+--- hs.window.filter:setDefaultFilter(filter) -> hs.window.filter object
+--- Method
+--- Set the default filtering rules to be used for apps without app-specific rules
+---
+--- Parameters:
+---  * filter - see `hs.window.filter:setAppFilter`
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
 function WindowFilter:setDefaultFilter(rules)
   self._filter:setDefaultFilter(rules)
   self:_refreshAllWindows()
   return self
 end
 
---- Set the override filter that applies to all windows.
---- @param rules boolean|table Filter rules
---- @return table self
+--- hs.window.filter:setOverrideFilter(filter) -> hs.window.filter object
+--- Method
+--- Set overriding filtering rules that will be applied for all apps before any app-specific rules
+---
+--- Parameters:
+---  * filter - see `hs.window.filter:setAppFilter`
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
 function WindowFilter:setOverrideFilter(rules)
   self._filter:setOverrideFilter(rules)
   self:_refreshAllWindows()
   return self
 end
 
---- Set filters from a table specification.
---- @param filters table Filter specification with optional sortOrder
---- @return table self
+--- hs.window.filter:setFilters(filters) -> hs.window.filter object
+--- Method
+--- Sets multiple filtering rules
+---
+--- Parameters:
+---  * filters - table, every element will set an application filter; these elements must:
+---    - have a *key* of type string, denoting an application name as per `hs.application:name()`
+---    - if the *value* is a boolean, the app will be allowed or rejected accordingly - see `hs.window.filter:allowApp()` and `hs.window.filter:rejectApp()`
+---    - if the *value* is a table, it must contain the accept/reject rules for the app *as key/value pairs*; valid keys and values are described in `hs.window.filter:setAppFilter()`
+---    - the key can be one of the special strings `"default"` and `"override"`, which will set the default and override filter respectively
+---    - the key can be the special string `"sortOrder"`; the value must be one of the `sortBy...` constants as per `hs.window.filter:setSortOrder()`
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
+---
+--- Notes:
+---  * every filter definition in `filters` will overwrite the preexisting one for the relevant application, if present; this also applies to the special default and override filters, if included
 function WindowFilter:setFilters(filters)
   if not filters then return self end
 
@@ -2510,22 +2652,47 @@ function WindowFilter:setFilters(filters)
   return self
 end
 
---- Get current filter configuration.
---- @return table Filter configuration
+--- hs.window.filter:getFilters() -> table
+--- Method
+--- Return a table with all the filtering rules defined for this windowfilter
+---
+--- Parameters:
+---  * None
+---
+--- Returns:
+---  * a table containing the filtering rules of this windowfilter; you can pass this table (optionally after performing valid manipulations) to `hs.window.filter:setFilters()` and `hs.window.filter.new()`
 function WindowFilter:getFilters()
   return self._filter:getFilters()
 end
 
---- Allow an app (shorthand for setAppFilter(app, true)).
---- @param appName string Application name
---- @return table self
+--- hs.window.filter:allowApp(appname) -> hs.window.filter object
+--- Method
+--- Sets the windowfilter to allow all visible windows belonging to a specific app
+---
+--- Parameters:
+---  * appname - app name as per `hs.application:name()`
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
+---
+--- Notes:
+---  * this is just a convenience wrapper for `windowfilter:setAppFilter(appname,{visible=true})`
 function WindowFilter:allowApp(appName)
   return self:setAppFilter(appName, true)
 end
 
---- Reject an app (shorthand for setAppFilter(app, false)).
---- @param appName string Application name
---- @return table self
+--- hs.window.filter:rejectApp(appname) -> hs.window.filter object
+--- Method
+--- Sets the windowfilter to outright reject any windows belonging to a specific app
+---
+--- Parameters:
+---  * appname - app name as per `hs.application:name()`
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
+---
+--- Notes:
+---  * this is just a convenience wrapper for `windowfilter:setAppFilter(appname,false)`
 function WindowFilter:rejectApp(appName)
   return self:setAppFilter(appName, false)
 end
@@ -2534,9 +2701,15 @@ end
 -- Query Methods
 ----------------------------------------------------------------------
 
---- Check if an app is allowed by this filter.
---- @param appName string Application name
---- @return boolean
+--- hs.window.filter:isAppAllowed(appname) -> boolean
+--- Method
+--- Checks if an app is allowed by the windowfilter
+---
+--- Parameters:
+---  * appname - app name as per `hs.application:name()`
+---
+--- Returns:
+---  * `false` if the app is rejected by the windowfilter; `true` otherwise
 function WindowFilter:isAppAllowed(appName)
   -- Custom filter functions allow all apps (filtering at window level)
   if self._customFilter then
@@ -2545,9 +2718,15 @@ function WindowFilter:isAppAllowed(appName)
   return self._filter:isAppAllowed(appName)
 end
 
---- Check if a window is allowed by this filter.
---- @param hsWindow userdata hs.window object
---- @return boolean
+--- hs.window.filter:isWindowAllowed(window) -> boolean
+--- Method
+--- Checks if a window is allowed by the windowfilter
+---
+--- Parameters:
+---  * window - an `hs.window` object to check
+---
+--- Returns:
+---  * `true` if the window is allowed by the windowfilter, `false` otherwise; `nil` if an invalid object was passed
 function WindowFilter:isWindowAllowed(hsWindow)
   if not hsWindow then return false end
 
@@ -2583,9 +2762,18 @@ end
 -- Configuration Methods
 ----------------------------------------------------------------------
 
---- Set the sort order for getWindows().
---- @param order string Sort order constant
---- @return table self
+--- hs.window.filter:setSortOrder(sortOrder) -> hs.window.filter object
+--- Method
+--- Sets the sort order for this windowfilter's `:getWindows()` method
+---
+--- Parameters:
+---  * sortOrder - one of the `hs.window.filter.sortBy...` constants
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
+---
+--- Notes:
+---  * The default sort order is `hs.window.filter.sortByFocusedLast`
 function WindowFilter:setSortOrder(order)
   self._sortOrder = order
   return self
@@ -2607,9 +2795,15 @@ local sortingComparators = {
   end,
 }
 
---- Get the currently allowed windows.
---- @param sortOrder string|nil Sort order (defaults to filter's sort order or focusedLast)
---- @return table List of hs.window objects
+--- hs.window.filter:getWindows([sortOrder]) -> list of hs.window objects
+--- Method
+--- Gets the current windows allowed by this windowfilter
+---
+--- Parameters:
+---  * sortOrder - (optional) one of the `hs.window.filter.sortBy...` constants to override the windowfilter's sort order (this does not change the internal sort order)
+---
+--- Returns:
+---  * a list of `hs.window` objects
 function WindowFilter:getWindows(sortOrder)
   -- One-shot activation: temporarily activate if not active
   local wasActive = self._active
@@ -2669,9 +2863,19 @@ function WindowFilter:getWindows(sortOrder)
   return result
 end
 
---- Set whether to only include windows in current space.
---- @param current boolean
---- @return table self
+--- hs.window.filter:setCurrentSpace(val) -> hs.window.filter object
+--- Method
+--- Sets whether the windowfilter should only allow (or reject) windows in the current Mission Control Space
+---
+--- Parameters:
+---  * val - boolean; if `true`, only allow windows in the current Mission Control Space, plus minimized and hidden windows; if `false`, reject them; if `nil`, ignore Mission Control Spaces
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
+---
+--- Notes:
+---  * This is just a convenience wrapper for setting the `currentSpace` field in the `override` filter
+---  * Spaces-aware windowfilters might experience a (sometimes significant) delay after every Space switch
 function WindowFilter:setCurrentSpace(current)
   self._currentSpaceOnly = current
   if current then
@@ -2685,18 +2889,36 @@ function WindowFilter:setCurrentSpace(current)
   return self
 end
 
---- Set allowed screens.
---- @param screens table|string Screen specification
---- @return table self
+--- hs.window.filter:setScreens(screens) -> hs.window.filter object
+--- Method
+--- Sets the allowed screens for this windowfilter
+---
+--- Parameters:
+---  * screens - a valid argument for `hs.screen.find()`, or a list of them, indicating the allowed screen(s) for this windowfilter
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
+---
+--- Notes:
+---  * This is just a convenience wrapper for setting the `allowScreens` field in the `override` filter
 function WindowFilter:setScreens(screens)
   self._allowedScreens = screens
   self:_refreshAllWindows()
   return self
 end
 
---- Set allowed regions.
---- @param regions table Region specification
---- @return table self
+--- hs.window.filter:setRegions(regions) -> hs.window.filter object
+--- Method
+--- Sets the allowed screen regions for this windowfilter
+---
+--- Parameters:
+---  * regions - an `hs.geometry` rect or constructor argument, or a list of them, indicating the allowed region(s) for this windowfilter
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
+---
+--- Notes:
+---  * This is just a convenience wrapper for setting the `allowRegions` field in the `override` filter
 function WindowFilter:setRegions(regions)
   self._allowedRegions = regions
   self:_refreshAllWindows()
@@ -2707,22 +2929,43 @@ end
 -- Lifecycle Methods
 ----------------------------------------------------------------------
 
---- Pause the filter (stop receiving events).
---- @return table self
+--- hs.window.filter:pause() -> hs.window.filter object
+--- Method
+--- Stops the windowfilter event subscriptions; no more event callbacks will be triggered, but the subscriptions remain intact for a subsequent call to `hs.window.filter:resume()`
+---
+--- Parameters:
+---  * None
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
 function WindowFilter:pause()
   self._paused = true
   return self
 end
 
---- Resume the filter (start receiving events).
---- @return table self
+--- hs.window.filter:resume() -> hs.window.filter object
+--- Method
+--- Resumes the windowfilter event subscriptions
+---
+--- Parameters:
+---  * None
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
 function WindowFilter:resume()
   self._paused = false
   return self
 end
 
---- Delete the filter (deactivate and clean up).
---- @return nil
+--- hs.window.filter:delete()
+--- Method
+--- Deletes the windowfilter, deactivating it and releasing resources
+---
+--- Parameters:
+---  * None
+---
+--- Returns:
+---  * None
 function WindowFilter:delete()
   if self._active then
     Manager.getInstance():deactivate(self)
@@ -2733,9 +2976,18 @@ function WindowFilter:delete()
   return nil
 end
 
---- Keep the filter active even without subscriptions.
---- @param keep boolean|nil Whether to keep active (default true)
---- @return table self
+--- hs.window.filter:keepActive([active]) -> hs.window.filter object
+--- Method
+--- Keeps the windowfilter active even when there are no subscriptions
+---
+--- Parameters:
+---  * active - (optional) if `false`, stop keeping active; defaults to `true`
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
+---
+--- Notes:
+---  * This is useful for windowfilters that are only used via `:getWindows()` without subscriptions
 function WindowFilter:keepActive(keep)
   if keep == nil then keep = true end
   if keep and not self._active then
@@ -2745,8 +2997,15 @@ function WindowFilter:keepActive(keep)
   return self
 end
 
---- Create a copy of this filter.
---- @return table New WindowFilter with same configuration
+--- hs.window.filter:copy() -> hs.window.filter object
+--- Method
+--- Returns a copy of this windowfilter that can be further restricted or expanded
+---
+--- Parameters:
+---  * None
+---
+--- Returns:
+---  * a new `hs.window.filter` object
 function WindowFilter:copy()
   local new = WindowFilter.new()
   new._filter = self._filter:copy()
@@ -2763,10 +3022,23 @@ end
 -- Subscription Methods
 ----------------------------------------------------------------------
 
---- Subscribe to window events.
---- @param event string|table|function Event name(s) or callback
---- @param fn function|nil Callback function (if event is string/table)
---- @return table self
+--- hs.window.filter:subscribe(event, fn[, immediate]) -> hs.window.filter object
+--- Method
+--- Subscribe to one or more events on the allowed windows
+---
+--- Parameters:
+---  * event - string or list of strings, the event(s) to subscribe to (see the `hs.window.filter` constants); alternatively, this can be a map `{event1=fn1,event2=fn2,...}`: fnN will be subscribed to eventN
+---  * fn - function or list of functions, the callback(s) to add for the event(s); each will be passed 3 parameters:
+---    * a `hs.window` object referring to the event's window
+---    * a string containing the application name (`window:application():name()`) for convenience
+---    * a string containing the event that caused the callback
+---  * immediate - (optional) if `true`, also call all the callbacks immediately for windows that satisfy the event(s) criteria
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
+---
+--- Notes:
+---  * If the windowfilter was paused with `hs.window.filter:pause()`, calling this will resume it.
 function WindowFilter:subscribe(event, fn)
   -- Handle different calling conventions
   if type(event) == 'function' then
@@ -2798,10 +3070,16 @@ function WindowFilter:subscribe(event, fn)
   return self
 end
 
---- Unsubscribe from window events.
---- @param event string|table|function|nil Event name(s) or callback
---- @param fn function|nil Callback function (if event is string)
---- @return table self
+--- hs.window.filter:unsubscribe([event][, fn]) -> hs.window.filter object
+--- Method
+--- Removes one or more event subscriptions
+---
+--- Parameters:
+---  * event - string or list of strings, the event(s) to unsubscribe; if omitted, `fn`(s) will be unsubscribed from all events; alternatively, this can be a map `{event1=fn1,event2=fn2,...}`
+---  * fn - function or list of functions, the callback(s) to remove; if omitted, all callbacks will be unsubscribed from `event`(s)
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
 function WindowFilter:unsubscribe(event, fn)
   if event == nil then
     -- unsubscribe() - remove all
@@ -2826,8 +3104,15 @@ function WindowFilter:unsubscribe(event, fn)
   return self
 end
 
---- Unsubscribe all callbacks.
---- @return table self
+--- hs.window.filter:unsubscribeAll() -> hs.window.filter object
+--- Method
+--- Removes all event subscriptions
+---
+--- Parameters:
+---  * None
+---
+--- Returns:
+---  * the `hs.window.filter` object for method chaining
 function WindowFilter:unsubscribeAll()
   self._subscriptions:removeAll()
   return self
@@ -3175,11 +3460,23 @@ end
 -- Module-level new function
 ----------------------------------------------------------------------
 
---- Create a new WindowFilter.
---- @param fn nil|boolean|string|table|function Filter specification
---- @param logname string|nil Optional log name
---- @param loglevel string|nil Optional log level
---- @return table WindowFilter instance
+--- hs.window.filter.new(fn[, logname[, loglevel]]) -> hs.window.filter object
+--- Constructor
+--- Creates a new hs.window.filter instance
+---
+--- Parameters:
+---  * fn
+---    * if `nil`, returns a copy of the default windowfilter, including any customizations you might have applied to it so far; you can then further restrict or expand it
+---    * if `true`, returns an empty windowfilter that allows every window
+---    * if `false`, returns a windowfilter with a default rule to reject every window
+---    * if a string or table of strings, returns a windowfilter that only allows visible windows of the specified apps as per `hs.application:name()`
+---    * if a table, you can fully define a windowfilter without having to call any methods after construction; the table must be structured as per `hs.window.filter:setFilters()`; if not specified in the table, the default filter in the new windowfilter will reject all windows
+---    * otherwise it must be a function that accepts an `hs.window` object and returns `true` if the window is allowed or `false` otherwise; this way you can define a fully custom windowfilter
+---  * logname - (optional) name of the `hs.logger` instance for the new windowfilter; if omitted, the class logger will be used
+---  * loglevel - (optional) log level for the `hs.logger` instance for the new windowfilter
+---
+--- Returns:
+---  * a new windowfilter instance
 function windowfilter.new(fn, logname, loglevel)
   return WindowFilter.new(fn, logname, loglevel)
 end
@@ -3219,6 +3516,21 @@ do
     windowfilter.ignoreInDefaultFilter[appname] = true
   end
 end
+
+--- hs.window.filter.default
+--- Constant
+--- The default windowfilter; it filters apps whose windows are transient in nature so that you're unlikely to ever need or want to manage them
+--- It also filters non-standard windows like popup menus, floating toolbars, etc.
+---
+--- Notes:
+---  * While you can customize the default windowfilter, it's usually advisable to make your customizations on a copy of it (see `hs.window.filter.new(nil)`)
+
+--- hs.window.filter.defaultCurrentSpace
+--- Constant
+--- A copy of the default windowfilter that only allows windows in the current Mission Control Space
+---
+--- Notes:
+---  * This windowfilter will also filter windows belonging to other Spaces. This can be useful to prevent the system from switching to other Spaces when performing window management operations
 
 -- Singletons for default and defaultCurrentSpace
 local defaultwf = nil
