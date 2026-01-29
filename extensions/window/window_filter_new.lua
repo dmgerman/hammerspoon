@@ -2506,7 +2506,8 @@ function WindowFilter:getWindows(sortOrder)
           end
         end
       end
-      if hsWindow then
+      -- Validate window is still valid (app hasn't terminated)
+      if hsWindow and safeCall(hsWindow.id, hsWindow) then
         windowsWithState[#windowsWithState + 1] = {
           window = hsWindow,
           state = state,

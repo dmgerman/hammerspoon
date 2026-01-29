@@ -1714,6 +1714,59 @@ local function testWindowFilterGetWindowsOneshotActivation()
   return success()
 end
 
+local function testWindowFilterGetWindowsExcludesInvalidWindows()
+  -- Test that getWindows() excludes windows from terminated apps
+  -- (windows where id() returns nil)
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+
+  -- Create mock windows - one valid, one invalid (terminated app)
+  local validWindow = {
+    id = function() return 100 end,
+    title = function() return "Valid Window" end,
+    application = function() return { name = function() return "TestApp" end, pid = function() return 1000 end } end,
+  }
+  local invalidWindow = {
+    id = function() return nil end,  -- Simulates terminated app
+    title = function() return "Invalid Window" end,
+    application = function() return nil end,
+  }
+
+  -- Create mock tracker with both windows
+  local mockTracker = {
+    running = true,
+    focusedWindowId = 100,
+    focusedAppPid = 1000,
+    apps = {
+      [1000] = {
+        windows = {
+          [100] = { _window = validWindow },
+          [200] = { _window = invalidWindow },
+        }
+      }
+    },
+    start = function() end,
+    stop = function(self) self.running = false end,
+  }
+  manager.tracker = mockTracker
+
+  local wf = wf_new.new()
+  -- Manually add both windows to the filter's tracking
+  -- STATE constants are strings: 'allowed', 'timeFocused', 'timeCreated'
+  wf._windows[100] = { allowed = true, timeFocused = 1, timeCreated = 1 }
+  wf._windows[200] = { allowed = true, timeFocused = 2, timeCreated = 2 }
+  wf._active = true
+
+  local wins = wf:getWindows()
+  assertIsTable(wins)
+  assertIsEqual(1, #wins)  -- Only the valid window should be returned
+  assertIsEqual(validWindow, wins[1])
+
+  wf:delete()
+  resetManager()
+  return success()
+end
+
 local function testWindowFilterNotifyBasic()
   -- Reset manager and inject mock tracker to avoid full Tracker startup
   resetManager()
@@ -2072,6 +2125,7 @@ local function runAllTests()
   runTest("testWindowFilterGetWindowsReturnsTable", testWindowFilterGetWindowsReturnsTable)
   runTest("testWindowFilterGetWindowsWithSortOrder", testWindowFilterGetWindowsWithSortOrder)
   runTest("testWindowFilterGetWindowsOneshotActivation", testWindowFilterGetWindowsOneshotActivation)
+  runTest("testWindowFilterGetWindowsExcludesInvalidWindows", testWindowFilterGetWindowsExcludesInvalidWindows)
   runTest("testWindowFilterNotifyBasic", testWindowFilterNotifyBasic)
   runTest("testWindowFilterNotifyWithImmediate", testWindowFilterNotifyWithImmediate)
   runTest("testWindowFilterNotifyWithFnEmpty", testWindowFilterNotifyWithFnEmpty)
