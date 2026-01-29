@@ -596,10 +596,120 @@ end
 windowfilter._Filter = Filter
 
 ----------------------------------------------------------------------
--- SECTION 7: PLACEHOLDER FOR FUTURE COMPONENTS
+-- SECTION 7: PREFILTER
+----------------------------------------------------------------------
+-- PreFilter decides whether to create watchers for apps/windows.
+-- This is a performance optimization - avoids tracking non-GUI apps
+-- and windows that will never match any filter.
+-- All functions are pure and take config as parameter.
+
+local PreFilter = {}
+
+--- Check if an app should be tracked (watcher created).
+--- Called by Tracker when a new app is detected.
+--- @param hsApp userdata The hs.application object
+--- @param config table PreFilter configuration
+--- @return boolean shouldTrack, string reason (if false)
+function PreFilter.shouldTrackApp(hsApp, config)
+  if not hsApp then return false, 'nil app' end
+  config = config or {}
+
+  -- Check app:kind() - negative means no GUI
+  local kind = safeCall(hsApp.kind, hsApp)
+  if kind and kind < 0 then
+    return false, 'not a GUI app'
+  end
+
+  local appName = safeCall(hsApp.name, hsApp) or ''
+  local bundleID = safeCall(hsApp.bundleID, hsApp) or ''
+
+  -- Check bundle ID blacklist
+  if config.ignoreBundleIDs and bundleID ~= '' then
+    if config.ignoreBundleIDs[bundleID] then
+      return false, 'bundleID blacklisted'
+    end
+  end
+
+  -- Check app name blacklist
+  if config.ignoreAppNames and appName ~= '' then
+    if config.ignoreAppNames[appName] then
+      return false, 'appName blacklisted'
+    end
+  end
+
+  -- Check app name pattern (e.g., '^QTKitServer%-')
+  if config.ignoreAppPattern and appName ~= '' then
+    if smatch(appName, config.ignoreAppPattern) then
+      return false, 'appName matches ignore pattern'
+    end
+  end
+
+  return true, nil
+end
+
+--- Check if a window should be tracked (watcher created).
+--- Called by Tracker when a new window is detected.
+--- Assumes app has already passed shouldTrackApp.
+--- @param hsWindow userdata The hs.window object
+--- @param hsApp userdata The hs.application object (for context, not re-checked)
+--- @param config table PreFilter configuration
+--- @return boolean shouldTrack, string reason (if false)
+function PreFilter.shouldTrack(hsWindow, hsApp, config)
+  if not hsWindow then return false, 'nil window' end
+  config = config or {}
+
+  -- Get window properties
+  local title = safeCall(hsWindow.title, hsWindow) or ''
+  local role = safeCall(hsWindow.subrole, hsWindow) or ''
+
+  -- Check title requirements
+  if config.requireTitle and #title == 0 then
+    return false, 'empty title'
+  end
+
+  if config.minTitleLength and config.minTitleLength > 0 then
+    if #title < config.minTitleLength then
+      return false, 'title too short'
+    end
+  end
+
+  -- Check role requirements
+  if config.requireRole and #role == 0 then
+    return false, 'empty role'
+  end
+
+  if config.allowedRoles then
+    if type(config.allowedRoles) == 'table' then
+      if not config.allowedRoles[role] then
+        return false, 'role not allowed'
+      end
+    end
+  end
+
+  return true, nil
+end
+
+--- Create a default PreFilter configuration.
+--- @return table Default config
+function PreFilter.defaultConfig()
+  return {
+    ignoreBundleIDs = {},
+    ignoreAppNames = {},
+    ignoreAppPattern = '^QTKitServer%-',  -- Default pattern from current impl
+    requireTitle = false,
+    requireRole = false,
+    minTitleLength = 0,
+    allowedRoles = nil,
+  }
+end
+
+-- Expose for testing
+windowfilter._PreFilter = PreFilter
+
+----------------------------------------------------------------------
+-- SECTION 8: PLACEHOLDER FOR FUTURE COMPONENTS
 ----------------------------------------------------------------------
 -- Components will be added in subsequent steps:
--- Step 4: PreFilter
 -- Step 5: Events, Subscriptions
 -- Step 6: Tracker
 -- Step 7: Manager

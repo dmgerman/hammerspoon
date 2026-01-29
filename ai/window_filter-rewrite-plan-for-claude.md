@@ -661,21 +661,26 @@ end)
 
 ---
 
-### Step 4: PreFilter (~100 lines)
+### Step 4: PreFilter (~100 lines) ✓ COMPLETE
 
 **What to implement:**
 - `PreFilter.shouldTrack(hsWindow, hsApp, config)` - Window tracking decision
 - `PreFilter.shouldTrackApp(hsApp, config)` - App tracking decision
 - Configuration options for bundle ID blacklist, app name blacklist, title/role requirements
 
-**Tests to write first:**
-```lua
-Test.describe('PreFilter', function()
-    Test.it('rejects blacklisted bundle IDs', ...)
-    Test.it('rejects ignoreAlways apps', ...)
-    Test.it('allows normal apps', ...)
-end)
-```
+**Design Decisions (Step 4):**
+
+1. **Separate functions**: `shouldTrackApp` checks app-level only, `shouldTrack` checks window-level only. Tracker calls them separately to avoid duplicate checks.
+
+2. **Config as parameter**: Config passed explicitly, not referenced from module globals. Keeps functions pure and testable.
+
+3. **ignoreAppPattern**: Made configurable instead of hard-coded. Default is `'^QTKitServer%-'` to match current behavior.
+
+4. **app:kind() check**: Added to `shouldTrackApp` - rejects apps with `kind < 0` (non-GUI apps).
+
+5. **defaultConfig()**: Helper function to create standard config structure.
+
+6. **requireTitle defaults to false**: Empty-title windows are common (dialogs, new windows, palettes). If PreFilter rejects them, we won't create watchers and will miss title changes. Title filtering should happen at Filter level via `allowTitles`, not PreFilter level.
 
 **Exit criteria:** PreFilter correctly filters apps/windows before watcher creation
 
