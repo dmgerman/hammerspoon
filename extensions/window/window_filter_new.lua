@@ -707,10 +707,321 @@ end
 windowfilter._PreFilter = PreFilter
 
 ----------------------------------------------------------------------
--- SECTION 8: PLACEHOLDER FOR FUTURE COMPONENTS
+-- SECTION 8: EVENTS AND SUBSCRIPTIONS
+----------------------------------------------------------------------
+
+----------------------------------------------------------------------
+-- Event Constants
+----------------------------------------------------------------------
+-- All events that can be subscribed to via windowfilter:subscribe().
+-- These match the current implementation exactly for API compatibility.
+
+--- Event: a new window was created
+windowfilter.windowCreated = 'windowCreated'
+
+--- Event: a window was destroyed
+windowfilter.windowDestroyed = 'windowDestroyed'
+
+--- Event: a window was moved or resized, including toggling fullscreen/maximize
+windowfilter.windowMoved = 'windowMoved'
+
+--- Event: a window was expanded to fullscreen
+windowfilter.windowFullscreened = 'windowFullscreened'
+
+--- Event: a window was reverted back from fullscreen
+windowfilter.windowUnfullscreened = 'windowUnfullscreened'
+
+--- Event: a window was minimized
+windowfilter.windowMinimized = 'windowMinimized'
+
+--- Event: a window was unminimized
+windowfilter.windowUnminimized = 'windowUnminimized'
+
+--- Event: a window was unhidden (app was unhidden via cmd-h)
+windowfilter.windowUnhidden = 'windowUnhidden'
+
+--- Event: a window was hidden (app was hidden via cmd-h)
+windowfilter.windowHidden = 'windowHidden'
+
+--- Event: a window became visible (in any Mission Control Space)
+windowfilter.windowVisible = 'windowVisible'
+
+--- Event: a window is no longer visible (in any Mission Control Space)
+windowfilter.windowNotVisible = 'windowNotVisible'
+
+--- Event: a window is now in the current Mission Control Space
+windowfilter.windowInCurrentSpace = 'windowInCurrentSpace'
+
+--- Event: a window is no longer in the current Mission Control Space
+windowfilter.windowNotInCurrentSpace = 'windowNotInCurrentSpace'
+
+--- Event: a window became actually visible on screen
+windowfilter.windowOnScreen = 'windowOnScreen'
+
+--- Event: a window is no longer actually visible on any screen
+windowfilter.windowNotOnScreen = 'windowNotOnScreen'
+
+--- Event: a window received focus
+windowfilter.windowFocused = 'windowFocused'
+
+--- Event: a window lost focus
+windowfilter.windowUnfocused = 'windowUnfocused'
+
+--- Event: a window's title changed
+windowfilter.windowTitleChanged = 'windowTitleChanged'
+
+--- Pseudo-event: a previously rejected window is now allowed
+--- Emitted before the actual event that caused the window to be allowed
+windowfilter.windowAllowed = 'windowAllowed'
+
+--- Pseudo-event: a previously allowed window is now rejected
+--- Emitted after the actual event that caused the window to be rejected
+windowfilter.windowRejected = 'windowRejected'
+
+--- Pseudo-event: the windowfilter now allows one window (was empty before)
+--- Emitted after the actual event that caused a window to be allowed
+windowfilter.hasWindow = 'hasWindow'
+
+--- Pseudo-event: the windowfilter now rejects all windows (was non-empty before)
+--- Emitted after the actual event that caused the last window to be rejected
+windowfilter.hasNoWindows = 'hasNoWindows'
+
+--- Pseudo-event: the list of allowed windows has changed
+windowfilter.windowsChanged = 'windowsChanged'
+
+-- Set of all valid events for validation
+local validEvents = {
+  [windowfilter.windowCreated] = true,
+  [windowfilter.windowDestroyed] = true,
+  [windowfilter.windowMoved] = true,
+  [windowfilter.windowFullscreened] = true,
+  [windowfilter.windowUnfullscreened] = true,
+  [windowfilter.windowMinimized] = true,
+  [windowfilter.windowUnminimized] = true,
+  [windowfilter.windowUnhidden] = true,
+  [windowfilter.windowHidden] = true,
+  [windowfilter.windowVisible] = true,
+  [windowfilter.windowNotVisible] = true,
+  [windowfilter.windowInCurrentSpace] = true,
+  [windowfilter.windowNotInCurrentSpace] = true,
+  [windowfilter.windowOnScreen] = true,
+  [windowfilter.windowNotOnScreen] = true,
+  [windowfilter.windowFocused] = true,
+  [windowfilter.windowUnfocused] = true,
+  [windowfilter.windowTitleChanged] = true,
+  [windowfilter.windowAllowed] = true,
+  [windowfilter.windowRejected] = true,
+  [windowfilter.hasWindow] = true,
+  [windowfilter.hasNoWindows] = true,
+  [windowfilter.windowsChanged] = true,
+}
+
+--- Check if an event name is valid.
+--- @param event string The event name to check
+--- @return boolean true if valid
+local function isValidEvent(event)
+  return validEvents[event] == true
+end
+
+-- Expose for testing
+windowfilter._validEvents = validEvents
+windowfilter._isValidEvent = isValidEvent
+
+----------------------------------------------------------------------
+-- Sort Order Constants
+----------------------------------------------------------------------
+-- Constants for getWindows() sort order parameter.
+
+--- Sort by focus time, most recently focused first
+windowfilter.sortByFocusedLast = 'focusedLast'
+
+--- Sort by focus time, least recently focused first
+windowfilter.sortByFocused = 'focused'
+
+--- Sort by creation time, most recently created first
+windowfilter.sortByCreatedLast = 'createdLast'
+
+--- Sort by creation time, oldest first
+windowfilter.sortByCreated = 'created'
+
+----------------------------------------------------------------------
+-- Subscriptions: Callback storage and emission
+----------------------------------------------------------------------
+-- Manages event subscriptions for a single windowfilter instance.
+-- Callbacks are stored as sets per event for O(1) add/remove.
+-- Emission uses pcall to protect against callback errors.
+
+local Subscriptions = {}
+Subscriptions.__index = Subscriptions
+
+--- Create a new Subscriptions object.
+--- @return table Subscriptions object
+function Subscriptions.new()
+  local self = setmetatable({}, Subscriptions)
+  self.callbacks = {}  -- event -> { [fn] = true }
+  return self
+end
+
+--- Add a callback for an event.
+--- @param event string The event name (must be a valid event constant)
+--- @param fn function The callback function
+--- @return boolean true if added, false if already existed
+function Subscriptions:add(event, fn)
+  -- Validate event
+  if not isValidEvent(event) then
+    error(sformat('invalid event: %s', tostring(event)), 2)
+  end
+  -- Validate callback
+  if type(fn) ~= 'function' then
+    error(sformat('callback must be a function, got %s', type(fn)), 2)
+  end
+
+  -- Create event table if needed
+  if not self.callbacks[event] then
+    self.callbacks[event] = {}
+  end
+
+  -- Check for duplicate
+  if self.callbacks[event][fn] then
+    return false
+  end
+
+  self.callbacks[event][fn] = true
+  return true
+end
+
+--- Remove a callback for an event.
+--- @param event string The event name
+--- @param fn function The callback function to remove
+--- @return boolean true if removed, false if not found
+function Subscriptions:remove(event, fn)
+  if not self.callbacks[event] then
+    return false
+  end
+
+  if not self.callbacks[event][fn] then
+    return false
+  end
+
+  self.callbacks[event][fn] = nil
+
+  -- Clean up empty event table
+  if not next(self.callbacks[event]) then
+    self.callbacks[event] = nil
+  end
+
+  return true
+end
+
+--- Remove all callbacks for a specific event, or all callbacks if event is nil.
+--- @param event string|nil The event name, or nil to remove all
+--- @return number The number of callbacks removed
+function Subscriptions:removeAll(event)
+  local count = 0
+
+  if event then
+    -- Remove all for specific event
+    if self.callbacks[event] then
+      for _ in pairs(self.callbacks[event]) do
+        count = count + 1
+      end
+      self.callbacks[event] = nil
+    end
+  else
+    -- Remove all callbacks
+    for ev, fns in pairs(self.callbacks) do
+      for _ in pairs(fns) do
+        count = count + 1
+      end
+    end
+    self.callbacks = {}
+  end
+
+  return count
+end
+
+--- Emit an event to all subscribed callbacks.
+--- Callbacks receive (window, appName, event) as arguments.
+--- Errors in callbacks are caught and logged, but don't stop other callbacks.
+--- @param event string The event name
+--- @param window userdata The hs.window object
+--- @param appName string The application name
+--- @return number The number of callbacks called
+function Subscriptions:emit(event, window, appName)
+  local fns = self.callbacks[event]
+  if not fns then return 0 end
+
+  local count = 0
+
+  -- Iterate over a snapshot of callbacks to handle removal during emit
+  local callbackList = {}
+  for fn in pairs(fns) do
+    tinsert(callbackList, fn)
+  end
+
+  for _, fn in ipairs(callbackList) do
+    -- Only call if still subscribed (might have been removed by earlier callback)
+    if fns[fn] then
+      local ok, err = pcall(fn, window, appName, event)
+      if not ok then
+        print(sformat('[wfilter] callback error for %s: %s', event, tostring(err)))
+      end
+      count = count + 1
+    end
+  end
+
+  return count
+end
+
+--- Check if there are any callbacks registered.
+--- @return boolean true if at least one callback exists
+function Subscriptions:hasAny()
+  return next(self.callbacks) ~= nil
+end
+
+--- Check if there are callbacks for a specific event.
+--- @param event string The event name
+--- @return boolean true if callbacks exist for this event
+function Subscriptions:hasEvent(event)
+  return self.callbacks[event] ~= nil and next(self.callbacks[event]) ~= nil
+end
+
+--- Get the count of callbacks for an event, or total if event is nil.
+--- @param event string|nil The event name, or nil for total count
+--- @return number The callback count
+function Subscriptions:count(event)
+  if event then
+    if not self.callbacks[event] then return 0 end
+    local n = 0
+    for _ in pairs(self.callbacks[event]) do n = n + 1 end
+    return n
+  else
+    local n = 0
+    for _, fns in pairs(self.callbacks) do
+      for _ in pairs(fns) do n = n + 1 end
+    end
+    return n
+  end
+end
+
+--- String representation for debugging.
+function Subscriptions:__tostring()
+  local eventCount = 0
+  local totalCallbacks = 0
+  for _, fns in pairs(self.callbacks) do
+    eventCount = eventCount + 1
+    for _ in pairs(fns) do totalCallbacks = totalCallbacks + 1 end
+  end
+  return sformat('Subscriptions: %d events, %d callbacks', eventCount, totalCallbacks)
+end
+
+-- Expose for testing
+windowfilter._Subscriptions = Subscriptions
+
+----------------------------------------------------------------------
+-- SECTION 9: PLACEHOLDER FOR FUTURE COMPONENTS
 ----------------------------------------------------------------------
 -- Components will be added in subsequent steps:
--- Step 5: Events, Subscriptions
 -- Step 6: Tracker
 -- Step 7: Manager
 -- Step 8: WindowFilter class (public API)

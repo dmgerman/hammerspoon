@@ -690,23 +690,30 @@ end)
 
 ---
 
-### Step 5: Events + Subscriptions (~100 lines)
+### Step 5: Events + Subscriptions (~100 lines) ✓ COMPLETE
 
 **What to implement:**
 - Event constants (windowCreated, windowDestroyed, etc.)
 - `Subscriptions.new()` - Subscription storage
 - `Subscriptions:add(event, fn)`, `:remove(event, fn)`, `:emit(event, window, appName)`
 
-**Tests to write first:**
-```lua
-Test.describe('Subscriptions', function()
-    Test.it('adds callback', ...)
-    Test.it('removes callback', ...)
-    Test.it('emits to all callbacks', ...)
-end)
-```
+**Design Decisions (Step 5):**
 
-**Exit criteria:** Event system works in isolation
+1. **Event validation**: `Subscriptions:add()` validates that the event is a known constant and throws an error for invalid events. This catches typos immediately rather than silently failing.
+
+2. **Callback validation**: `Subscriptions:add()` also validates that the callback is a function, erroring otherwise.
+
+3. **pcall protection in emit**: All user callbacks are wrapped in pcall. Errors are logged with `[wfilter] callback error for <event>: <message>` and don't prevent other callbacks from running.
+
+4. **Safe iteration during emit**: Callbacks are copied to a list before iteration to handle self-unsubscribe during emit. Each callback is checked if still subscribed before calling (in case an earlier callback removed it).
+
+5. **Duplicate prevention**: Adding the same function twice for the same event returns false and doesn't create a duplicate entry (callbacks stored as set `{[fn] = true}`).
+
+6. **Sort order constants included**: The `sortByFocused`, `sortByFocusedLast`, `sortByCreated`, `sortByCreatedLast` constants are defined in this step alongside event constants since they're simple module-level vocabulary.
+
+7. **Helper methods**: Added `hasAny()`, `hasEvent(event)`, and `count(event)` for Manager to check subscription state without accessing internals.
+
+**Exit criteria:** Event system works in isolation ✓
 
 ---
 
