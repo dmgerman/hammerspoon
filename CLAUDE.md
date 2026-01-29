@@ -135,7 +135,7 @@ Follow conventions in existing code (e.g., `window.lua`):
 
 ## Window Filter Rewrite
 
-**Current Status:** Step 4 Complete (PreFilter)
+**Current Status:** Step 6 Complete (Tracker)
 
 **IMPORTANT:** Development happens in `window_filter_new.lua` - the user's running Hammerspoon (`hs.window.filter`) is never affected. Test new code by loading it separately:
 ```lua
@@ -148,9 +148,12 @@ See `ai/` directory for rewrite planning documents:
 - `ai/window_filter-rewrite-info.md` - Technical reference
 - `ai/window_filter-rewrite-plan-for-claude.md` - Implementation guidance
 
-**Test file:** `extensions/window/test_window_filter.lua` (36 tests, all passing)
+**Test files:**
+- `extensions/window/test_window_filter.lua` - Contract tests (36 tests, public API)
+- `extensions/window/test_window_filter_internals.lua` - Internal tests (69 tests, new impl components)
 
-Run contract tests:
+Run tests:
 ```bash
 /Users/dmg/bin/osx/hs -c 'dofile("/Users/dmg/git.forks/hammerspoon/extensions/window/test_window_filter.lua")'
+/Users/dmg/bin/osx/hs -c 'dofile("/Users/dmg/git.forks/hammerspoon/extensions/window/test_window_filter_internals.lua")'
 ```
