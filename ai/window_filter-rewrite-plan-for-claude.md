@@ -795,27 +795,43 @@ end)
 **What to implement:**
 - `Manager.getInstance()` - Singleton access
 - `Manager:activate(wf)`, `:deactivate(wf)` - Instance management
-- `Manager:getContext()` - Current focus/active app
-- `Manager:refreshInstance(wf)` - Refresh windows for instance
-- Event routing to subscribed instances
+- `Manager:getContext()` - Current focus/active app (delegates to Tracker)
+- Event routing to active instances
 - Spaces handling with eager refresh (using `hs.spaces.watcher`)
+
+**Design Decisions (Step 7):**
+
+1. **Singleton lifecycle (Lazy)**: Start Tracker when first instance activates, stop when last deactivates. No wasted resources when no filters are active.
+
+2. **Event routing kept simple**: Manager routes raw Tracker events to instances via a single method: `instance:_handleTrackerEvent(eventType, windowInfo, appInfo)`. Manager does NOT handle event chaining or pseudo-events - that complexity is deferred to Step 8 (WindowFilter class).
+
+3. **Window state per instance (Distributed)**: Each WindowFilter instance tracks its own allowed windows. Manager doesn't maintain per-instance window state. Different filters have different allowed sets, so this is the natural place for that state.
+
+4. **Spaces refresh scope (Both behaviors)**: On space change:
+   - Always refresh space-aware instances (`currentSpace` filter set)
+   - Also refresh all active instances if `forceRefreshOnSpaceChange` is true
+   - This matches current implementation behavior exactly
+
+5. **Context from Tracker**: Manager's `getContext()` delegates to Tracker's state (`focusedWindowId`, `focusedAppPid`). Single source of truth, no sync issues.
+
+6. **Manager callback interface**: Manager implements Tracker's callback interface (onWindowCreated, onWindowDestroyed, etc.) and translates each to a call to `_handleTrackerEvent()` on all active instances.
+
+7. **Spaces watcher ownership**: Manager owns the `hs.spaces.watcher`. It starts when Manager starts (first instance activates) and stops when Manager stops (last instance deactivates).
 
 **Spaces handling:**
 - Use `hs.spaces.watcher` to detect space changes
-- On space change, refresh all spaces-aware windowfilter instances immediately
-- This matches current behavior and ensures `currentSpace=true` filters always reflect reality
+- On space change, call `_handleSpaceChange()` on relevant instances
 - The `forceRefreshOnSpaceChange` module variable controls whether non-spaces-aware filters also refresh
 
-**Tests to write first:**
-```lua
-Test.describe('Manager', function()
-    Test.it('activates and tracks instances', ...)
-    Test.it('refreshes on space change', ...)
-    Test.it('routes events to subscribers', ...)
-end)
-```
+**Manager's focused responsibilities:**
+1. Singleton access (`getInstance()`)
+2. Tracker lifecycle (lazy start/stop based on active instance count)
+3. Instance registration (`activate`/`deactivate`)
+4. Spaces watcher lifecycle
+5. Route Tracker callbacks to active instances via `_handleTrackerEvent()`
+6. Provide context getter (delegates to Tracker)
 
-**Exit criteria:** Manager coordinates tracker and instances correctly
+**Exit criteria:** Manager coordinates tracker and instances correctly ✓
 
 ---
 
