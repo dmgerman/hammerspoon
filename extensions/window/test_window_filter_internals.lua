@@ -1716,23 +1716,28 @@ end
 
 local function testWindowFilterGetWindowsExcludesInvalidWindows()
   -- Test that getWindows() excludes windows from terminated apps
-  -- (windows where id() returns nil)
+  -- (windows where id() returns nil OR application() returns nil)
   resetManager()
   local manager = wf_new._Manager.getInstance()
 
-  -- Create mock windows - one valid, one invalid (terminated app)
+  -- Create mock windows - one valid, two invalid (terminated app)
   local validWindow = {
     id = function() return 100 end,
     title = function() return "Valid Window" end,
     application = function() return { name = function() return "TestApp" end, pid = function() return 1000 end } end,
   }
-  local invalidWindow = {
-    id = function() return nil end,  -- Simulates terminated app
-    title = function() return "Invalid Window" end,
+  local invalidWindowNoId = {
+    id = function() return nil end,  -- Simulates fully terminated app
+    title = function() return "Invalid Window No ID" end,
     application = function() return nil end,
   }
+  local invalidWindowOrphaned = {
+    id = function() return 300 end,  -- ID still valid but app is gone
+    title = function() return "Orphaned Window" end,
+    application = function() return nil end,  -- App terminated
+  }
 
-  -- Create mock tracker with both windows
+  -- Create mock tracker with all windows
   local mockTracker = {
     running = true,
     focusedWindowId = 100,
@@ -1741,7 +1746,8 @@ local function testWindowFilterGetWindowsExcludesInvalidWindows()
       [1000] = {
         windows = {
           [100] = { _window = validWindow },
-          [200] = { _window = invalidWindow },
+          [200] = { _window = invalidWindowNoId },
+          [300] = { _window = invalidWindowOrphaned },
         }
       }
     },
@@ -1751,10 +1757,11 @@ local function testWindowFilterGetWindowsExcludesInvalidWindows()
   manager.tracker = mockTracker
 
   local wf = wf_new.new()
-  -- Manually add both windows to the filter's tracking
+  -- Manually add all windows to the filter's tracking
   -- STATE constants are strings: 'allowed', 'timeFocused', 'timeCreated'
   wf._windows[100] = { allowed = true, timeFocused = 1, timeCreated = 1 }
   wf._windows[200] = { allowed = true, timeFocused = 2, timeCreated = 2 }
+  wf._windows[300] = { allowed = true, timeFocused = 3, timeCreated = 3 }
   wf._active = true
 
   local wins = wf:getWindows()

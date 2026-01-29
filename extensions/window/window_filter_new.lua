@@ -2507,7 +2507,8 @@ function WindowFilter:getWindows(sortOrder)
         end
       end
       -- Validate window is still valid (app hasn't terminated)
-      if hsWindow and safeCall(hsWindow.id, hsWindow) then
+      -- Check both id() and application() since orphaned windows may still have an id
+      if hsWindow and safeCall(hsWindow.id, hsWindow) and safeCall(hsWindow.application, hsWindow) then
         windowsWithState[#windowsWithState + 1] = {
           window = hsWindow,
           state = state,
