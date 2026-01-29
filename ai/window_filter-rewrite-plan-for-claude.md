@@ -835,7 +835,7 @@ end)
 
 ---
 
-### Step 8a: WindowFilter Class + Events (~200 lines)
+### Step 8a: WindowFilter Class + Events (~200 lines) ✓ COMPLETE
 
 **What to implement:**
 - `WF.new(fn, logname, loglevel)` - All constructor forms (nil, true, false, string, table, function)

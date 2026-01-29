@@ -592,6 +592,130 @@ function Filter.resolveScreens(screenHints)
   return ids
 end
 
+----------------------------------------------------------------------
+-- Filter Instance Methods
+----------------------------------------------------------------------
+-- These methods allow Filter to be used as an instance with stored rules.
+
+-- Save reference to the static matches function before we shadow it
+local Filter_matchesStatic = Filter.matches
+
+Filter.__index = Filter
+
+--- Create a new Filter instance.
+--- @return table Filter instance with empty rules
+function Filter.new()
+  local self = setmetatable({}, Filter)
+  self._rules = FilterRules.new()
+  return self
+end
+
+--- Set filter rules for a specific app.
+--- @param appName string Application name
+--- @param rules boolean|table Filter rules (true=allow, false=reject, table=detailed rules)
+function Filter:setAppFilter(appName, rules)
+  if type(rules) == 'boolean' then
+    self._rules.appRules[appName] = rules
+  elseif type(rules) == 'table' then
+    self._rules.appRules[appName] = rules
+  else
+    self._rules.appRules[appName] = nil
+  end
+end
+
+--- Set the default filter for apps without specific rules.
+--- @param rules boolean|table Filter rules
+function Filter:setDefaultFilter(rules)
+  if rules == true then
+    self._rules.default = {}  -- Empty table means "allow with no restrictions"
+  elseif rules == false then
+    self._rules.default = false
+  elseif type(rules) == 'table' then
+    self._rules.default = rules
+  else
+    self._rules.default = nil
+  end
+end
+
+--- Set the override filter that applies to all windows.
+--- @param rules boolean|table Filter rules
+function Filter:setOverrideFilter(rules)
+  if rules == true then
+    self._rules.override = {}  -- Allow all
+  elseif rules == false then
+    self._rules.override = false
+  elseif type(rules) == 'table' then
+    self._rules.override = rules
+  else
+    self._rules.override = nil
+  end
+end
+
+--- Get current filter configuration.
+--- @return table Filter rules
+function Filter:getFilters()
+  local result = {}
+  if self._rules.default ~= nil then
+    result.default = self._rules.default
+  end
+  if self._rules.override ~= nil then
+    result.override = self._rules.override
+  end
+  for appName, rules in pairs(self._rules.appRules) do
+    result[appName] = rules
+  end
+  return result
+end
+
+--- Check if an app is allowed by this filter.
+--- @param appName string Application name
+--- @return boolean
+function Filter:isAppAllowed(appName)
+  -- Check if app is explicitly rejected
+  if self._rules.appRules[appName] == false then
+    return false
+  end
+  -- Check if app has rules (meaning it's allowed)
+  if self._rules.appRules[appName] then
+    return true
+  end
+  -- Check default
+  if self._rules.default == false then
+    return false
+  end
+  -- Default allows
+  return true
+end
+
+--- Match a window against this filter's rules (instance method).
+--- @param windowInfo table WindowInfo object
+--- @param appInfo table|nil AppInfo object
+--- @param context table {focusedWindowId, activeAppPid}
+--- @return boolean allowed
+function Filter:matchWindow(windowInfo, appInfo, context)
+  local ok, _ = Filter_matchesStatic(self._rules, windowInfo, context)
+  return ok
+end
+
+--- Create a copy of this filter.
+--- @return table New Filter with same rules
+function Filter:copy()
+  local new = Filter.new()
+  new._rules.default = self._rules.default
+  new._rules.override = self._rules.override
+  for appName, rules in pairs(self._rules.appRules) do
+    if type(rules) == 'table' then
+      -- Deep copy rule table
+      local copy = {}
+      for k, v in pairs(rules) do copy[k] = v end
+      new._rules.appRules[appName] = copy
+    else
+      new._rules.appRules[appName] = rules
+    end
+  end
+  return new
+end
+
 -- Expose for testing
 windowfilter._Filter = Filter
 
@@ -2089,10 +2213,659 @@ windowfilter._Manager = Manager
 windowfilter.forceRefreshOnSpaceChange = false
 
 ----------------------------------------------------------------------
--- SECTION 11: PLACEHOLDER FOR FUTURE COMPONENTS
+-- SECTION 11: WINDOWFILTER CLASS (PUBLIC API)
+----------------------------------------------------------------------
+-- WindowFilter is the main public API. It provides:
+-- - Filter configuration (setAppFilter, setDefaultFilter, etc.)
+-- - Window queries (isAppAllowed, isWindowAllowed, getWindows)
+-- - Event subscriptions (subscribe, unsubscribe)
+-- - Lifecycle management (pause, resume, delete, keepActive)
+
+local WindowFilter = {}
+WindowFilter.__index = WindowFilter
+
+-- Window state keys for tracking
+local STATE_ALLOWED = 'allowed'
+local STATE_VISIBLE = 'visible'
+local STATE_ON_SCREEN = 'onScreen'
+local STATE_IN_SPACE = 'inCurrentSpace'
+local STATE_FOCUSED = 'focused'
+
+----------------------------------------------------------------------
+-- Constructor
+----------------------------------------------------------------------
+
+--- Create a new WindowFilter.
+--- @param fn nil|boolean|string|table|function Filter specification
+--- @param logname string|nil Optional log name
+--- @param loglevel string|nil Optional log level
+--- @return table WindowFilter instance
+function WindowFilter.new(fn, logname, loglevel)
+  local self = setmetatable({}, WindowFilter)
+
+  -- Internal state
+  self._filter = Filter.new()           -- Filter instance for rule matching
+  self._subscriptions = Subscriptions.new()  -- Event subscriptions
+  self._windows = {}                    -- {windowId -> {state table}}
+  self._customFilter = nil              -- Custom filter function (if any)
+  self._paused = false                  -- Paused state
+  self._active = false                  -- Whether activated with Manager
+  self._trackSpaces = false             -- Whether to track space changes
+  self._sortOrder = nil                 -- Sort order for getWindows
+  self._currentSpaceOnly = false        -- Only windows in current space
+  self._allowedScreens = nil            -- Screen filter
+  self._allowedRegions = nil            -- Region filter
+  self._logname = logname               -- Log name
+  self._loglevel = loglevel             -- Log level
+
+  -- Parse constructor argument
+  self:_parseConstructorArg(fn)
+
+  return self
+end
+
+--- Parse the constructor argument and configure the filter.
+--- @param fn nil|boolean|string|table|function
+function WindowFilter:_parseConstructorArg(fn)
+  if fn == nil then
+    -- Default filter: allow all apps except ignoreAlways
+    self._filter:setDefaultFilter(true)
+  elseif fn == true then
+    -- Allow all apps including ignored ones
+    self._filter:setOverrideFilter(true)
+  elseif fn == false then
+    -- Reject all apps
+    self._filter:setDefaultFilter(false)
+  elseif type(fn) == 'string' then
+    -- Single app name
+    self._filter:setDefaultFilter(false)
+    self._filter:setAppFilter(fn, true)
+  elseif type(fn) == 'function' then
+    -- Custom filter function
+    self._customFilter = fn
+  elseif type(fn) == 'table' then
+    -- Could be app list or app rules
+    if #fn > 0 then
+      -- Array of app names
+      self._filter:setDefaultFilter(false)
+      for _, appName in ipairs(fn) do
+        self._filter:setAppFilter(appName, true)
+      end
+    else
+      -- Table of app rules
+      for appName, rules in pairs(fn) do
+        self._filter:setAppFilter(appName, rules)
+      end
+    end
+  end
+end
+
+----------------------------------------------------------------------
+-- Filter Configuration Methods (all return self for chaining)
+----------------------------------------------------------------------
+
+--- Set filter rules for a specific app.
+--- @param appName string Application name
+--- @param rules boolean|table Filter rules
+--- @return table self
+function WindowFilter:setAppFilter(appName, rules)
+  self._filter:setAppFilter(appName, rules)
+  self:_refreshAllWindows()
+  return self
+end
+
+--- Set the default filter for apps without specific rules.
+--- @param rules boolean|table Filter rules
+--- @return table self
+function WindowFilter:setDefaultFilter(rules)
+  self._filter:setDefaultFilter(rules)
+  self:_refreshAllWindows()
+  return self
+end
+
+--- Set the override filter that applies to all windows.
+--- @param rules boolean|table Filter rules
+--- @return table self
+function WindowFilter:setOverrideFilter(rules)
+  self._filter:setOverrideFilter(rules)
+  self:_refreshAllWindows()
+  return self
+end
+
+--- Set filters from a table specification.
+--- @param filters table Filter specification with optional sortOrder
+--- @return table self
+function WindowFilter:setFilters(filters)
+  if not filters then return self end
+
+  -- Handle sortOrder if present
+  if filters.sortOrder then
+    self._sortOrder = filters.sortOrder
+  end
+
+  -- Apply filters
+  for appName, rules in pairs(filters) do
+    if appName ~= 'sortOrder' then
+      if appName == 'default' then
+        self:setDefaultFilter(rules)
+      elseif appName == 'override' then
+        self:setOverrideFilter(rules)
+      else
+        self:setAppFilter(appName, rules)
+      end
+    end
+  end
+
+  return self
+end
+
+--- Get current filter configuration.
+--- @return table Filter configuration
+function WindowFilter:getFilters()
+  return self._filter:getFilters()
+end
+
+--- Allow an app (shorthand for setAppFilter(app, true)).
+--- @param appName string Application name
+--- @return table self
+function WindowFilter:allowApp(appName)
+  return self:setAppFilter(appName, true)
+end
+
+--- Reject an app (shorthand for setAppFilter(app, false)).
+--- @param appName string Application name
+--- @return table self
+function WindowFilter:rejectApp(appName)
+  return self:setAppFilter(appName, false)
+end
+
+----------------------------------------------------------------------
+-- Query Methods
+----------------------------------------------------------------------
+
+--- Check if an app is allowed by this filter.
+--- @param appName string Application name
+--- @return boolean
+function WindowFilter:isAppAllowed(appName)
+  -- Custom filter functions allow all apps (filtering at window level)
+  if self._customFilter then
+    return true
+  end
+  return self._filter:isAppAllowed(appName)
+end
+
+--- Check if a window is allowed by this filter.
+--- @param hsWindow userdata hs.window object
+--- @return boolean
+function WindowFilter:isWindowAllowed(hsWindow)
+  if not hsWindow then return false end
+
+  -- Custom filter function bypasses Filter logic
+  if self._customFilter then
+    local ok, result = pcall(self._customFilter, hsWindow)
+    return ok and result == true
+  end
+
+  -- Build WindowInfo and check against filter
+  local windowInfo = WindowInfo.new(hsWindow)
+  if not windowInfo.id then return false end
+
+  local appInfo = nil
+  local hsApp = safeCall(hsWindow.application, hsWindow)
+  if hsApp then
+    appInfo = AppInfo.new(hsApp)
+  end
+
+  local context = Manager.getInstance():getContext()
+  return self._filter:matchWindow(windowInfo, appInfo, context)
+end
+
+----------------------------------------------------------------------
+-- Configuration Methods
+----------------------------------------------------------------------
+
+--- Set the sort order for getWindows().
+--- @param order string Sort order constant
+--- @return table self
+function WindowFilter:setSortOrder(order)
+  self._sortOrder = order
+  return self
+end
+
+--- Set whether to only include windows in current space.
+--- @param current boolean
+--- @return table self
+function WindowFilter:setCurrentSpace(current)
+  self._currentSpaceOnly = current
+  if current then
+    self._trackSpaces = true
+    -- Update Manager registration if active
+    if self._active then
+      Manager.getInstance().spacesInstances[self] = true
+    end
+  end
+  self:_refreshAllWindows()
+  return self
+end
+
+--- Set allowed screens.
+--- @param screens table|string Screen specification
+--- @return table self
+function WindowFilter:setScreens(screens)
+  self._allowedScreens = screens
+  self:_refreshAllWindows()
+  return self
+end
+
+--- Set allowed regions.
+--- @param regions table Region specification
+--- @return table self
+function WindowFilter:setRegions(regions)
+  self._allowedRegions = regions
+  self:_refreshAllWindows()
+  return self
+end
+
+----------------------------------------------------------------------
+-- Lifecycle Methods
+----------------------------------------------------------------------
+
+--- Pause the filter (stop receiving events).
+--- @return table self
+function WindowFilter:pause()
+  self._paused = true
+  return self
+end
+
+--- Resume the filter (start receiving events).
+--- @return table self
+function WindowFilter:resume()
+  self._paused = false
+  return self
+end
+
+--- Delete the filter (deactivate and clean up).
+--- @return nil
+function WindowFilter:delete()
+  if self._active then
+    Manager.getInstance():deactivate(self)
+    self._active = false
+  end
+  self._subscriptions:removeAll()
+  self._windows = {}
+  return nil
+end
+
+--- Keep the filter active even without subscriptions.
+--- @param keep boolean|nil Whether to keep active (default true)
+--- @return table self
+function WindowFilter:keepActive(keep)
+  if keep == nil then keep = true end
+  if keep and not self._active then
+    Manager.getInstance():activate(self)
+    self._active = true
+  end
+  return self
+end
+
+--- Create a copy of this filter.
+--- @return table New WindowFilter with same configuration
+function WindowFilter:copy()
+  local new = WindowFilter.new()
+  new._filter = self._filter:copy()
+  new._customFilter = self._customFilter
+  new._sortOrder = self._sortOrder
+  new._currentSpaceOnly = self._currentSpaceOnly
+  new._trackSpaces = self._trackSpaces
+  new._allowedScreens = self._allowedScreens
+  new._allowedRegions = self._allowedRegions
+  return new
+end
+
+----------------------------------------------------------------------
+-- Subscription Methods
+----------------------------------------------------------------------
+
+--- Subscribe to window events.
+--- @param event string|table|function Event name(s) or callback
+--- @param fn function|nil Callback function (if event is string/table)
+--- @return table self
+function WindowFilter:subscribe(event, fn)
+  -- Handle different calling conventions
+  if type(event) == 'function' then
+    -- subscribe(fn) - subscribe to all events
+    fn = event
+    for eventName in pairs(windowfilter) do
+      if type(windowfilter[eventName]) == 'number' then
+        -- Skip non-event constants
+      elseif type(eventName) == 'string' and eventName:match('^window') then
+        self._subscriptions:add(eventName, fn)
+      end
+    end
+  elseif type(event) == 'table' then
+    -- subscribe({event = fn, ...})
+    for eventName, callback in pairs(event) do
+      self._subscriptions:add(eventName, callback)
+    end
+  else
+    -- subscribe(event, fn)
+    self._subscriptions:add(event, fn)
+  end
+
+  -- Activate with Manager if not already active
+  if not self._active and self._subscriptions:hasAny() then
+    Manager.getInstance():activate(self)
+    self._active = true
+  end
+
+  return self
+end
+
+--- Unsubscribe from window events.
+--- @param event string|table|function|nil Event name(s) or callback
+--- @param fn function|nil Callback function (if event is string)
+--- @return table self
+function WindowFilter:unsubscribe(event, fn)
+  if event == nil then
+    -- unsubscribe() - remove all
+    self._subscriptions:removeAll()
+  elseif type(event) == 'function' then
+    -- unsubscribe(fn) - remove this callback from all events
+    self._subscriptions:removeAll(event)
+  elseif type(event) == 'table' then
+    -- unsubscribe({event, ...}) - remove all callbacks for these events
+    for _, eventName in ipairs(event) do
+      self._subscriptions:removeAll(eventName)
+    end
+  else
+    -- unsubscribe(event, fn)
+    if fn then
+      self._subscriptions:remove(event, fn)
+    else
+      self._subscriptions:removeAll(event)
+    end
+  end
+
+  return self
+end
+
+--- Unsubscribe all callbacks.
+--- @return table self
+function WindowFilter:unsubscribeAll()
+  self._subscriptions:removeAll()
+  return self
+end
+
+----------------------------------------------------------------------
+-- Event Handling (called by Manager)
+----------------------------------------------------------------------
+
+--- Handle an event from the Tracker via Manager.
+--- @param eventType string Event type name
+--- @param windowInfo table|nil WindowInfo object
+--- @param appInfo table|nil AppInfo object
+function WindowFilter:_handleTrackerEvent(eventType, windowInfo, appInfo)
+  if self._paused then return end
+
+  -- Handle app-level events
+  if eventType == 'appActivated' or eventType == 'appDeactivated' or
+     eventType == 'appHidden' or eventType == 'appUnhidden' then
+    self:_handleAppEvent(eventType, appInfo)
+    return
+  end
+
+  -- Handle space change
+  if eventType == 'spaceChanged' then
+    self:_handleSpaceChange()
+    return
+  end
+
+  -- Window events require windowInfo
+  if not windowInfo or not windowInfo.id then return end
+
+  -- Get or create window state
+  local windowId = windowInfo.id
+  local oldState = self._windows[windowId]
+  local newState = self:_computeWindowState(windowInfo, appInfo)
+
+  -- Handle window destruction
+  if eventType == 'windowDestroyed' then
+    if oldState and oldState[STATE_ALLOWED] then
+      self:_emitEvent('windowDestroyed', windowInfo, appInfo)
+      self:_emitStateChanges(oldState, {}, windowInfo, appInfo)
+    end
+    self._windows[windowId] = nil
+    return
+  end
+
+  -- Store new state
+  self._windows[windowId] = newState
+
+  -- Emit the raw event if window is allowed
+  if newState[STATE_ALLOWED] then
+    self:_emitEvent(eventType, windowInfo, appInfo)
+  end
+
+  -- Emit state change events
+  self:_emitStateChanges(oldState or {}, newState, windowInfo, appInfo)
+end
+
+--- Handle focus change event (called by Manager with extra context).
+--- @param windowInfo table|nil WindowInfo for newly focused window
+--- @param appInfo table|nil AppInfo for newly focused app
+--- @param prevWindowInfo table|nil WindowInfo for previously focused window
+function WindowFilter:_handleFocusChanged(windowInfo, appInfo, prevWindowInfo)
+  if self._paused then return end
+
+  -- Handle unfocus of previous window
+  if prevWindowInfo and prevWindowInfo.id then
+    local oldState = self._windows[prevWindowInfo.id]
+    if oldState and oldState[STATE_ALLOWED] then
+      oldState[STATE_FOCUSED] = false
+      self:_emitEvent('windowUnfocused', prevWindowInfo, nil)
+    end
+  end
+
+  -- Handle focus of new window
+  if windowInfo and windowInfo.id then
+    local newState = self._windows[windowInfo.id]
+    if newState and newState[STATE_ALLOWED] then
+      newState[STATE_FOCUSED] = true
+      self:_emitEvent('windowFocused', windowInfo, appInfo)
+    end
+  end
+end
+
+--- Compute the current state of a window.
+--- @param windowInfo table WindowInfo object
+--- @param appInfo table|nil AppInfo object
+--- @return table State table
+function WindowFilter:_computeWindowState(windowInfo, appInfo)
+  local state = {}
+  local context = Manager.getInstance():getContext()
+
+  -- Check if window passes filter
+  if self._customFilter then
+    -- For custom filters, we need the actual window object
+    -- windowInfo._window may be stale, so we check what we can
+    state[STATE_ALLOWED] = true  -- Assume allowed, will be refined
+  else
+    state[STATE_ALLOWED] = self._filter:matchWindow(windowInfo, appInfo, context)
+  end
+
+  -- Check visibility (not hidden by app hide)
+  state[STATE_VISIBLE] = not windowInfo.isHidden
+
+  -- Check on screen (not minimized, has valid frame)
+  state[STATE_ON_SCREEN] = not windowInfo.isMinimized and windowInfo.frame ~= nil
+
+  -- Check current space (if tracking)
+  if self._currentSpaceOnly then
+    -- For now, assume in current space if visible
+    -- Full implementation would check hs.spaces
+    state[STATE_IN_SPACE] = state[STATE_VISIBLE]
+  else
+    state[STATE_IN_SPACE] = true
+  end
+
+  -- Check focused
+  state[STATE_FOCUSED] = (context.focusedWindowId == windowInfo.id)
+
+  return state
+end
+
+--- Emit state change events based on old vs new state.
+--- @param oldState table Previous state
+--- @param newState table New state
+--- @param windowInfo table WindowInfo object
+--- @param appInfo table|nil AppInfo object
+function WindowFilter:_emitStateChanges(oldState, newState, windowInfo, appInfo)
+  local wasAllowed = oldState[STATE_ALLOWED]
+  local isAllowed = newState[STATE_ALLOWED]
+
+  -- windowAllowed / windowRejected
+  if isAllowed and not wasAllowed then
+    self:_emitEvent('windowAllowed', windowInfo, appInfo)
+  elseif not isAllowed and wasAllowed then
+    self:_emitEvent('windowRejected', windowInfo, appInfo)
+  end
+
+  -- Only emit other state changes if window is/was allowed
+  if not isAllowed and not wasAllowed then return end
+
+  -- windowVisible / windowNotVisible
+  local wasVisible = oldState[STATE_VISIBLE]
+  local isVisible = newState[STATE_VISIBLE]
+  if isAllowed and isVisible and not wasVisible then
+    self:_emitEvent('windowVisible', windowInfo, appInfo)
+  elseif wasAllowed and not isVisible and wasVisible then
+    self:_emitEvent('windowNotVisible', windowInfo, appInfo)
+  end
+
+  -- windowOnScreen / windowNotOnScreen
+  local wasOnScreen = oldState[STATE_ON_SCREEN]
+  local isOnScreen = newState[STATE_ON_SCREEN]
+  if isAllowed and isOnScreen and not wasOnScreen then
+    self:_emitEvent('windowOnScreen', windowInfo, appInfo)
+  elseif wasAllowed and not isOnScreen and wasOnScreen then
+    self:_emitEvent('windowNotOnScreen', windowInfo, appInfo)
+  end
+
+  -- windowInCurrentSpace / windowNotInCurrentSpace
+  local wasInSpace = oldState[STATE_IN_SPACE]
+  local isInSpace = newState[STATE_IN_SPACE]
+  if isAllowed and isInSpace and not wasInSpace then
+    self:_emitEvent('windowInCurrentSpace', windowInfo, appInfo)
+  elseif wasAllowed and not isInSpace and wasInSpace then
+    self:_emitEvent('windowNotInCurrentSpace', windowInfo, appInfo)
+  end
+
+  -- windowMinimized / windowUnminimized (derived from onScreen)
+  if isAllowed and not isOnScreen and wasOnScreen and not newState[STATE_VISIBLE] == oldState[STATE_VISIBLE] then
+    -- State changed due to minimize, not visibility
+    if windowInfo.isMinimized then
+      self:_emitEvent('windowMinimized', windowInfo, appInfo)
+    end
+  elseif isAllowed and isOnScreen and not wasOnScreen then
+    if not windowInfo.isMinimized and oldState[STATE_ON_SCREEN] == false then
+      self:_emitEvent('windowUnminimized', windowInfo, appInfo)
+    end
+  end
+end
+
+--- Handle app-level events.
+--- @param eventType string Event type
+--- @param appInfo table AppInfo object
+function WindowFilter:_handleAppEvent(eventType, appInfo)
+  if not appInfo then return end
+
+  -- Find windows belonging to this app and update their state
+  for windowId, state in pairs(self._windows) do
+    -- We'd need to check if window belongs to app
+    -- For now, emit the app event if we have any allowed windows from this app
+    if state[STATE_ALLOWED] then
+      -- Emit hidden/shown events for windows
+      if eventType == 'appHidden' then
+        self:_emitEvent('windowHidden', {id = windowId}, appInfo)
+      elseif eventType == 'appUnhidden' then
+        self:_emitEvent('windowShown', {id = windowId}, appInfo)
+      end
+    end
+  end
+end
+
+--- Handle space change.
+function WindowFilter:_handleSpaceChange()
+  -- Refresh all windows to update inCurrentSpace state
+  self:_refreshAllWindows()
+end
+
+--- Refresh state for all tracked windows.
+function WindowFilter:_refreshAllWindows()
+  -- This will be called when filter configuration changes
+  -- Re-evaluate all windows and emit appropriate events
+  local manager = Manager.getInstance()
+  if not manager:isRunning() then return end
+
+  local tracker = manager:getTracker()
+  if not tracker then return end
+
+  -- Re-process all tracked windows
+  for _, appInfo in pairs(tracker.apps) do
+    for _, windowInfo in pairs(appInfo.windows) do
+      local oldState = self._windows[windowInfo.id] or {}
+      local newState = self:_computeWindowState(windowInfo, appInfo)
+      self._windows[windowInfo.id] = newState
+      self:_emitStateChanges(oldState, newState, windowInfo, appInfo)
+    end
+  end
+end
+
+--- Emit an event to subscribers.
+--- @param eventType string Event type
+--- @param windowInfo table WindowInfo object
+--- @param appInfo table|nil AppInfo object
+function WindowFilter:_emitEvent(eventType, windowInfo, appInfo)
+  -- Get the hs.window object if available
+  local hsWindow = windowInfo._window
+  local hsApp = appInfo and appInfo._app or nil
+  local appName = appInfo and appInfo.name or nil
+
+  self._subscriptions:emit(eventType, hsWindow, appName, eventType)
+end
+
+----------------------------------------------------------------------
+-- String representation
+----------------------------------------------------------------------
+
+function WindowFilter:__tostring()
+  local count = 0
+  for _ in pairs(self._windows) do count = count + 1 end
+  return sformat('WindowFilter: %d windows, active=%s, paused=%s',
+    count, tostring(self._active), tostring(self._paused))
+end
+
+----------------------------------------------------------------------
+-- Module-level new function
+----------------------------------------------------------------------
+
+--- Create a new WindowFilter.
+--- @param fn nil|boolean|string|table|function Filter specification
+--- @param logname string|nil Optional log name
+--- @param loglevel string|nil Optional log level
+--- @return table WindowFilter instance
+function windowfilter.new(fn, logname, loglevel)
+  return WindowFilter.new(fn, logname, loglevel)
+end
+
+-- Expose for testing
+windowfilter._WindowFilter = WindowFilter
+
+----------------------------------------------------------------------
+-- SECTION 12: PLACEHOLDER FOR FUTURE COMPONENTS
 ----------------------------------------------------------------------
 -- Components will be added in subsequent steps:
--- Step 8: WindowFilter class (public API)
+-- Step 8b: getWindows + sorting
 -- Step 9: Default filters, module functions
 
 ----------------------------------------------------------------------

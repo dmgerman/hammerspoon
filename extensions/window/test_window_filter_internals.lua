@@ -1433,6 +1433,227 @@ local function testManagerIntegrationWithTracker()
 end
 
 -- ============================================================================
+-- STEP 8a: WINDOWFILTER CLASS TESTS
+-- ============================================================================
+
+local function testWindowFilterCreation()
+  local wf = wf_new.new()
+  assertIsNotNil(wf)
+  assertIsTable(wf)
+  return success()
+end
+
+local function testWindowFilterConstructorNil()
+  local wf = wf_new.new(nil)
+  -- Default filter allows most apps
+  assertTrue(wf:isAppAllowed('Safari'))
+  assertTrue(wf:isAppAllowed('Finder'))
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterConstructorTrue()
+  local wf = wf_new.new(true)
+  -- Allow all including normally ignored apps
+  assertTrue(wf:isAppAllowed('Safari'))
+  assertTrue(wf:isAppAllowed('Spotlight'))  -- Normally ignored
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterConstructorFalse()
+  local wf = wf_new.new(false)
+  -- Reject all apps
+  assertFalse(wf:isAppAllowed('Safari'))
+  assertFalse(wf:isAppAllowed('Finder'))
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterConstructorString()
+  local wf = wf_new.new('Safari')
+  -- Only Safari allowed
+  assertTrue(wf:isAppAllowed('Safari'))
+  assertFalse(wf:isAppAllowed('Finder'))
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterConstructorTable()
+  local wf = wf_new.new({'Safari', 'Finder'})
+  assertTrue(wf:isAppAllowed('Safari'))
+  assertTrue(wf:isAppAllowed('Finder'))
+  assertFalse(wf:isAppAllowed('Chrome'))
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterConstructorFunction()
+  local wf = wf_new.new(function(win) return true end)
+  -- Custom function allows all apps at app level
+  assertTrue(wf:isAppAllowed('Safari'))
+  assertTrue(wf:isAppAllowed('Anything'))
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterSetAppFilter()
+  local wf = wf_new.new()
+  local result = wf:setAppFilter('Safari', true)
+  assertIsEqual(wf, result)  -- Returns self for chaining
+  assertTrue(wf:isAppAllowed('Safari'))
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterSetDefaultFilter()
+  local wf = wf_new.new()
+  local result = wf:setDefaultFilter(false)
+  assertIsEqual(wf, result)
+  assertFalse(wf:isAppAllowed('Safari'))
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterAllowRejectApp()
+  local wf = wf_new.new(false)
+  wf:allowApp('Safari')
+  assertTrue(wf:isAppAllowed('Safari'))
+  wf:rejectApp('Safari')
+  assertFalse(wf:isAppAllowed('Safari'))
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterPauseResume()
+  local wf = wf_new.new()
+  assertFalse(wf._paused)
+  wf:pause()
+  assertTrue(wf._paused)
+  wf:resume()
+  assertFalse(wf._paused)
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterCopy()
+  local wf1 = wf_new.new()
+  wf1:setAppFilter('Safari', true)
+  wf1:setDefaultFilter(false)
+
+  local wf2 = wf1:copy()
+  assertIsNotNil(wf2)
+  assertTrue(wf2:isAppAllowed('Safari'))
+  assertFalse(wf2:isAppAllowed('Finder'))
+
+  -- Modifications to copy don't affect original
+  wf2:allowApp('Finder')
+  assertTrue(wf2:isAppAllowed('Finder'))
+  assertFalse(wf1:isAppAllowed('Finder'))
+
+  wf1:delete()
+  wf2:delete()
+  return success()
+end
+
+local function testWindowFilterSubscribe()
+  -- Reset manager and inject mock tracker to avoid full Tracker startup
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  local called = false
+  local result = wf:subscribe('windowCreated', function() called = true end)
+  assertIsEqual(wf, result)  -- Returns self
+  assertTrue(wf._subscriptions:hasEvent('windowCreated'))
+  assertTrue(wf._active)  -- Subscribe activates the filter
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+local function testWindowFilterUnsubscribe()
+  -- Reset manager and inject mock tracker to avoid full Tracker startup
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  local fn = function() end
+  wf:subscribe('windowCreated', fn)
+  assertTrue(wf._subscriptions:hasEvent('windowCreated'))
+  wf:unsubscribe('windowCreated', fn)
+  assertFalse(wf._subscriptions:hasEvent('windowCreated'))
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+local function testWindowFilterKeepActive()
+  -- Reset manager and inject mock tracker to avoid full Tracker startup
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  assertFalse(wf._active)
+  wf:keepActive()
+  assertTrue(wf._active)
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+local function testWindowFilterToString()
+  local wf = wf_new.new()
+  local str = tostring(wf)
+  assertIsString(str)
+  assertTrue(string.find(str, "WindowFilter") ~= nil)
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterSetCurrentSpace()
+  local wf = wf_new.new()
+  assertFalse(wf._currentSpaceOnly)
+  wf:setCurrentSpace(true)
+  assertTrue(wf._currentSpaceOnly)
+  assertTrue(wf._trackSpaces)
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterSetScreens()
+  local wf = wf_new.new()
+  wf:setScreens("Main")
+  assertIsEqual("Main", wf._allowedScreens)
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterSetRegions()
+  local wf = wf_new.new()
+  local region = {x = 0, y = 0, w = 100, h = 100}
+  wf:setRegions({region})
+  assertIsTable(wf._allowedRegions)
+  wf:delete()
+  return success()
+end
+
+local function testWindowFilterGetFilters()
+  local wf = wf_new.new()
+  wf:setAppFilter('Safari', {visible = true})
+  wf:setDefaultFilter(false)
+  local filters = wf:getFilters()
+  assertIsTable(filters)
+  assertIsNotNil(filters['Safari'])
+  assertIsEqual(false, filters.default)
+  wf:delete()
+  return success()
+end
+
+-- ============================================================================
 -- RUN ALL TESTS
 -- ============================================================================
 
@@ -1563,6 +1784,29 @@ local function runAllTests()
   runTest("testManagerRefreshInstance", testManagerRefreshInstance)
   runTest("testManagerFocusChangedRouting", testManagerFocusChangedRouting)
   runTest("testManagerIntegrationWithTracker", testManagerIntegrationWithTracker)
+
+  -- Step 8a: WindowFilter
+  print("\nStep 8a: WindowFilter")
+  runTest("testWindowFilterCreation", testWindowFilterCreation)
+  runTest("testWindowFilterConstructorNil", testWindowFilterConstructorNil)
+  runTest("testWindowFilterConstructorTrue", testWindowFilterConstructorTrue)
+  runTest("testWindowFilterConstructorFalse", testWindowFilterConstructorFalse)
+  runTest("testWindowFilterConstructorString", testWindowFilterConstructorString)
+  runTest("testWindowFilterConstructorTable", testWindowFilterConstructorTable)
+  runTest("testWindowFilterConstructorFunction", testWindowFilterConstructorFunction)
+  runTest("testWindowFilterSetAppFilter", testWindowFilterSetAppFilter)
+  runTest("testWindowFilterSetDefaultFilter", testWindowFilterSetDefaultFilter)
+  runTest("testWindowFilterAllowRejectApp", testWindowFilterAllowRejectApp)
+  runTest("testWindowFilterPauseResume", testWindowFilterPauseResume)
+  runTest("testWindowFilterCopy", testWindowFilterCopy)
+  runTest("testWindowFilterSubscribe", testWindowFilterSubscribe)
+  runTest("testWindowFilterUnsubscribe", testWindowFilterUnsubscribe)
+  runTest("testWindowFilterKeepActive", testWindowFilterKeepActive)
+  runTest("testWindowFilterToString", testWindowFilterToString)
+  runTest("testWindowFilterSetCurrentSpace", testWindowFilterSetCurrentSpace)
+  runTest("testWindowFilterSetScreens", testWindowFilterSetScreens)
+  runTest("testWindowFilterSetRegions", testWindowFilterSetRegions)
+  runTest("testWindowFilterGetFilters", testWindowFilterGetFilters)
 
   -- Summary
   print("\n" .. string.rep("=", 60))
