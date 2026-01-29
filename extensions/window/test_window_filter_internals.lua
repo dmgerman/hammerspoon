@@ -1800,6 +1800,110 @@ local function testWindowFilterTimestampsTracked()
 end
 
 -- ============================================================================
+-- Step 9: Module Variables and Functions
+-- ============================================================================
+
+local function testModuleAllowedWindowRoles()
+  assertIsTable(wf_new.allowedWindowRoles)
+  assertTrue(wf_new.allowedWindowRoles.AXStandardWindow)
+  assertTrue(wf_new.allowedWindowRoles.AXDialog)
+  return success()
+end
+
+local function testModuleIgnoreInDefaultFilter()
+  assertIsTable(wf_new.ignoreInDefaultFilter)
+  -- Should contain some known transient apps
+  assertTrue(wf_new.ignoreInDefaultFilter['Spotlight'])
+  return success()
+end
+
+local function testModuleIswf()
+  local wf = wf_new.new()
+  assertTrue(wf_new.iswf(wf))
+  assertFalse(wf_new.iswf({}))
+  assertFalse(wf_new.iswf(nil))
+  assertFalse(wf_new.iswf("string"))
+  wf:delete()
+  return success()
+end
+
+local function testModuleCopy()
+  local wf = wf_new.new('Safari')
+  local copy = wf_new.copy(wf)
+  assertIsNotNil(copy)
+  assertTrue(wf_new.iswf(copy))
+  -- Should be independent
+  assertTrue(copy:isAppAllowed('Safari'))
+  copy:rejectApp('Safari')
+  assertTrue(wf:isAppAllowed('Safari'))  -- Original unchanged
+  assertFalse(copy:isAppAllowed('Safari'))
+  wf:delete()
+  copy:delete()
+  return success()
+end
+
+local function testModuleSetLogLevel()
+  -- Should not error
+  wf_new.setLogLevel('debug')
+  assertIsEqual('debug', wf_new._logLevel)
+  wf_new.setLogLevel('info')
+  assertIsEqual('info', wf_new._logLevel)
+  return success()
+end
+
+local function testModuleBatchOperations()
+  -- Reset manager and inject mock tracker to avoid full Tracker startup
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local id = wf_new.startBatchOperation()
+  assertIsString(id)
+  assertTrue(#id > 0)
+  -- Stop should not error
+  wf_new.stopBatchOperation(id)
+  resetManager()
+  return success()
+end
+
+local function testModuleCallable()
+  -- Reset manager and inject mock tracker
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  -- windowfilter(...) should return getWindows() result
+  local wins = wf_new('Safari')
+  assertIsTable(wins)
+  resetManager()
+  return success()
+end
+
+local function testDirectionMethodsExist()
+  local wf = wf_new.new()
+  -- Check direction methods exist on instance
+  assertIsFunction(wf.windowsToEast)
+  assertIsFunction(wf.windowsToWest)
+  assertIsFunction(wf.windowsToNorth)
+  assertIsFunction(wf.windowsToSouth)
+  assertIsFunction(wf.focusWindowEast)
+  assertIsFunction(wf.focusWindowWest)
+  assertIsFunction(wf.focusWindowNorth)
+  assertIsFunction(wf.focusWindowSouth)
+  wf:delete()
+  return success()
+end
+
+local function testModuleFocusFunctionsExist()
+  -- Check module-level focus functions exist
+  assertIsFunction(wf_new.focusEast)
+  assertIsFunction(wf_new.focusWest)
+  assertIsFunction(wf_new.focusNorth)
+  assertIsFunction(wf_new.focusSouth)
+  return success()
+end
+
+-- ============================================================================
 -- RUN ALL TESTS
 -- ============================================================================
 
@@ -1964,6 +2068,18 @@ local function runAllTests()
   runTest("testWindowFilterNotifyWithFnEmpty", testWindowFilterNotifyWithFnEmpty)
   runTest("testWindowFilterNotifyRemove", testWindowFilterNotifyRemove)
   runTest("testWindowFilterTimestampsTracked", testWindowFilterTimestampsTracked)
+
+  -- Step 9: Module Variables and Functions
+  print("\nStep 9: Module Variables and Functions")
+  runTest("testModuleAllowedWindowRoles", testModuleAllowedWindowRoles)
+  runTest("testModuleIgnoreInDefaultFilter", testModuleIgnoreInDefaultFilter)
+  runTest("testModuleIswf", testModuleIswf)
+  runTest("testModuleCopy", testModuleCopy)
+  runTest("testModuleSetLogLevel", testModuleSetLogLevel)
+  runTest("testModuleBatchOperations", testModuleBatchOperations)
+  runTest("testModuleCallable", testModuleCallable)
+  runTest("testDirectionMethodsExist", testDirectionMethodsExist)
+  runTest("testModuleFocusFunctionsExist", testModuleFocusFunctionsExist)
 
   -- Summary
   print("\n" .. string.rep("=", 60))

@@ -441,7 +441,7 @@ function Filter.matchesRule(rule, windowInfo, context)
   end
 
   -- Roles (check subrole against allowed list)
-  local allowedRoles = rule.allowRoles or Config.ALLOWED_ROLES
+  local allowedRoles = rule.allowRoles or windowfilter.allowedWindowRoles or Config.ALLOWED_ROLES
   if allowedRoles ~= '*' then
     if type(allowedRoles) == 'string' then
       allowedRoles = {[allowedRoles] = true}
@@ -3033,14 +3033,195 @@ end
 windowfilter._WindowFilter = WindowFilter
 
 ----------------------------------------------------------------------
--- SECTION 12: PLACEHOLDER FOR FUTURE COMPONENTS
-----------------------------------------------------------------------
--- Components will be added in subsequent steps:
--- Step 8b: getWindows + sorting
--- Step 9: Default filters, module functions
-
-----------------------------------------------------------------------
--- RETURN MODULE
+-- SECTION 12: MODULE VARIABLES AND SINGLETONS
 ----------------------------------------------------------------------
 
-return windowfilter
+--- hs.window.filter.allowedWindowRoles
+--- Variable
+--- A table of window roles allowed by default.
+--- Set roles as keys: `{AXStandardWindow=true, AXDialog=true}`
+windowfilter.allowedWindowRoles = {
+  AXStandardWindow = true,
+  AXDialog = true,
+  AXSystemDialog = true,
+}
+
+--- hs.window.filter.ignoreInDefaultFilter
+--- Variable
+--- Apps to reject in the default filter (but not in new(true)).
+--- These are apps with transient windows unlikely to be useful.
+windowfilter.ignoreInDefaultFilter = {}
+do
+  local SKIP_APPS_TRANSIENT_WINDOWS = {
+    'Spotlight', 'Notification Center', 'loginwindow', 'ScreenSaverEngine',
+    'PressAndHold', 'PopClip', 'Pastebot', 'Fantastical', 'Keychain Access',
+    'SecurityAgent', 'Reeder', 'ScreenFloat - Screenshot Tools', 'Dropzone',
+    'Alfred', 'Alfred 2', 'Alfred 3', 'Alfred Preferences', 'Keka',
+    'Pastebot', 'Bartender', 'Bartender 2', 'Bartender 3',
+    'Focus', 'Timing', 'Timing 2', 'Flux', 'Flycut',
+  }
+  for _, appname in ipairs(SKIP_APPS_TRANSIENT_WINDOWS) do
+    windowfilter.ignoreInDefaultFilter[appname] = true
+  end
+end
+
+-- Singletons for default and defaultCurrentSpace
+local defaultwf = nil
+local defaultCurrentSpacewf = nil
+
+-- Create the default windowfilter singleton
+local function makeDefault()
+  if not defaultwf then
+    defaultwf = windowfilter.new(true, 'wf-default')
+    -- Reject apps in ignoreInDefaultFilter
+    for appname in pairs(windowfilter.ignoreInDefaultFilter) do
+      defaultwf:rejectApp(appname)
+    end
+    -- Special handling for Hammerspoon
+    defaultwf:setAppFilter('Hammerspoon', {
+      allowTitles = {'Preferences', 'Console'},
+      allowRoles = 'AXStandardWindow'
+    })
+    -- Default to visible windows only
+    defaultwf:setDefaultFilter({visible = true})
+  end
+  return defaultwf
+end
+
+-- Create the defaultCurrentSpace windowfilter singleton
+local function makeDefaultCurrentSpace()
+  if not defaultCurrentSpacewf then
+    defaultCurrentSpacewf = makeDefault():copy()
+    defaultCurrentSpacewf:setCurrentSpace(true)
+  end
+  return defaultCurrentSpacewf
+end
+
+----------------------------------------------------------------------
+-- SECTION 13: MODULE FUNCTIONS
+----------------------------------------------------------------------
+
+--- hs.window.filter.copy(wf) -> hs.window.filter object
+--- Function
+--- Creates a copy of a windowfilter.
+--- @param wf table WindowFilter to copy
+--- @param logname string|nil Optional log name
+--- @param loglevel string|nil Optional log level
+--- @return table New WindowFilter copy
+function windowfilter.copy(wf, logname, loglevel)
+  if not wf or not wf.copy then
+    error('wf must be a windowfilter object', 2)
+  end
+  local new = wf:copy()
+  if logname then new._logname = logname end
+  if loglevel then new._loglevel = loglevel end
+  return new
+end
+
+--- hs.window.filter.iswf(t) -> boolean
+--- Function
+--- Checks if a value is a windowfilter object.
+--- @param t any Value to check
+--- @return boolean true if t is a windowfilter
+function windowfilter.iswf(t)
+  return type(t) == 'table' and t._filter ~= nil and t._subscriptions ~= nil
+end
+
+--- hs.window.filter.setLogLevel(lvl)
+--- Function
+--- Sets the log level for the window filter module.
+--- @param lvl string|number Log level
+function windowfilter.setLogLevel(lvl)
+  -- Store for future use when proper logging is added
+  windowfilter._logLevel = lvl
+end
+
+--- hs.window.filter.switchedToSpace(space)
+--- Function
+--- Manually notify the module of a space change.
+--- Use this when the system doesn't detect space changes automatically.
+--- @param space number Space number (currently unused)
+function windowfilter.switchedToSpace(space)
+  local manager = Manager.getInstance()
+  if manager:isRunning() then
+    manager:_handleSpaceChange()
+  end
+end
+
+-- Batch operations for ensuring tracker runs during multiple operations
+local batches = {}
+
+--- hs.window.filter.startBatchOperation() -> string
+--- Function
+--- Start a batch operation (keeps tracker running).
+--- @return string Batch ID to pass to stopBatchOperation
+function windowfilter.startBatchOperation()
+  local id = tostring(timer.secondsSinceEpoch()) .. tostring(math.random(100000))
+  batches[id] = true
+  -- Ensure manager is running
+  local manager = Manager.getInstance()
+  if not manager:isRunning() then
+    manager:_start()
+  end
+  return id
+end
+
+--- hs.window.filter.stopBatchOperation(id)
+--- Function
+--- Stop a batch operation.
+--- @param id string Batch ID from startBatchOperation
+function windowfilter.stopBatchOperation(id)
+  batches[id] = nil
+  -- If no more batches and no active instances, stop
+  if not next(batches) then
+    local manager = Manager.getInstance()
+    if manager.instanceCount == 0 then
+      manager:_stop()
+    end
+  end
+end
+
+----------------------------------------------------------------------
+-- SECTION 14: DIRECTION AND FOCUS METHODS
+----------------------------------------------------------------------
+
+-- Add direction methods to WindowFilter using loop to avoid repetition
+local window = hs.window
+for _, dir in ipairs{'East', 'North', 'West', 'South'} do
+  -- windowsToEast/North/West/South
+  WindowFilter['windowsTo' .. dir] = function(self, win, ...)
+    return window['windowsTo' .. dir](win, self:getWindows(), ...)
+  end
+  -- focusWindowEast/North/West/South
+  WindowFilter['focusWindow' .. dir] = function(self, win, ...)
+    return window['focusWindow' .. dir](win, self:getWindows(), ...)
+  end
+  -- Module-level focusEast/North/West/South
+  windowfilter['focus' .. dir] = function()
+    local wf = makeDefaultCurrentSpace()
+    wf:keepActive()
+    wf['focusWindow' .. dir](wf, nil, nil, true)
+  end
+end
+
+----------------------------------------------------------------------
+-- RETURN MODULE WITH METATABLE
+----------------------------------------------------------------------
+
+local rawget = rawget
+return setmetatable(windowfilter, {
+  -- Lazy singletons via __index
+  __index = function(t, k)
+    if k == 'default' then
+      return makeDefault()
+    elseif k == 'defaultCurrentSpace' then
+      return makeDefaultCurrentSpace()
+    else
+      return rawget(t, k)
+    end
+  end,
+  -- Module callable: windowfilter(...) -> windowfilter.new(...):getWindows()
+  __call = function(_, ...)
+    return windowfilter.new(...):getWindows()
+  end,
+})

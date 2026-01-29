@@ -946,7 +946,7 @@ Future optimization opportunities (deferred to avoid scope creep):
 
 ---
 
-### Step 9: Default Filters + Module Functions (~120 lines)
+### Step 9: Default Filters + Module Functions (~120 lines) ✓ COMPLETE
 
 **What to implement:**
 - `windowfilter.default` - Lazy singleton
@@ -959,8 +959,8 @@ Future optimization opportunities (deferred to avoid scope creep):
 - Module-level focus functions: focusEast/West/North/South
 - `windowfilter.switchedToSpace(n)` - Manual space notification
 - `windowfilter.forceRefreshOnSpaceChange` - Configuration
-- `windowfilter.isGuiApp(name)` - Utility
 - `windowfilter.iswf(t)` - Check if value is a windowfilter
+- ~~`windowfilter.isGuiApp(name)`~~ - NOT IMPLEMENTED (not needed internally, was only used by _showCandidates debug function)
 - `windowfilter.setLogLevel(lvl)` - Set log level
 - `windowfilter.startBatchOperation()` / `stopBatchOperation(id)` - Batch operation helpers
 - Module callable via `__call` metamethod: `windowfilter(...)` → `windowfilter.new(...):getWindows()`
