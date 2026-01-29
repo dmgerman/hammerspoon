@@ -1701,10 +1701,315 @@ end
 windowfilter._Tracker = Tracker
 
 ----------------------------------------------------------------------
--- SECTION 10: PLACEHOLDER FOR FUTURE COMPONENTS
+-- SECTION 10: MANAGER
+----------------------------------------------------------------------
+-- Manager is a singleton that coordinates between Tracker and WindowFilter
+-- instances. It handles:
+-- - Tracker lifecycle (lazy start/stop)
+-- - Instance registration (activate/deactivate)
+-- - Event routing to active instances
+-- - Spaces change handling
+-- - Context access (focusedWindowId, activeAppPid)
+
+local Manager = {}
+Manager.__index = Manager
+
+-- Singleton instance
+local managerInstance = nil
+
+--- Get the Manager singleton instance.
+--- Creates it on first call.
+--- @return table Manager instance
+function Manager.getInstance()
+  if not managerInstance then
+    managerInstance = Manager._create()
+  end
+  return managerInstance
+end
+
+--- Create a new Manager instance (internal).
+--- @return table Manager instance
+function Manager._create()
+  local self = setmetatable({}, Manager)
+
+  self.tracker = nil              -- Tracker instance (created lazily)
+  self.activeInstances = {}       -- {[wf] = true} active windowfilter instances
+  self.spacesInstances = {}       -- {[wf] = true} instances that care about spaces
+  self.spacesWatcher = nil        -- hs.spaces.watcher
+  self.instanceCount = 0          -- Count of active instances
+  self.preFilter = PreFilter.defaultConfig()  -- PreFilter config for Tracker
+
+  return self
+end
+
+--- Activate a windowfilter instance.
+--- Starts Tracker if this is the first active instance.
+--- @param wf table WindowFilter instance
+function Manager:activate(wf)
+  if self.activeInstances[wf] then return end
+
+  self.activeInstances[wf] = true
+  self.instanceCount = self.instanceCount + 1
+
+  -- Check if instance cares about spaces
+  if wf._trackSpaces then
+    self.spacesInstances[wf] = true
+  end
+
+  -- Start Tracker if first instance
+  if self.instanceCount == 1 then
+    self:_start()
+  end
+
+  -- Refresh the instance with current windows
+  self:_refreshInstance(wf)
+end
+
+--- Deactivate a windowfilter instance.
+--- Stops Tracker if this was the last active instance.
+--- @param wf table WindowFilter instance
+function Manager:deactivate(wf)
+  if not self.activeInstances[wf] then return end
+
+  self.activeInstances[wf] = nil
+  self.spacesInstances[wf] = nil
+  self.instanceCount = self.instanceCount - 1
+
+  -- Stop Tracker if last instance
+  if self.instanceCount == 0 then
+    self:_stop()
+  end
+end
+
+--- Get context for filter matching.
+--- @return table {focusedWindowId, activeAppPid}
+function Manager:getContext()
+  if self.tracker then
+    return {
+      focusedWindowId = self.tracker.focusedWindowId,
+      activeAppPid = self.tracker.focusedAppPid,
+    }
+  end
+  return {focusedWindowId = nil, activeAppPid = nil}
+end
+
+--- Get the Tracker instance (for testing/debugging).
+--- @return table|nil Tracker instance or nil if not started
+function Manager:getTracker()
+  return self.tracker
+end
+
+--- Check if Manager is running.
+--- @return boolean
+function Manager:isRunning()
+  return self.tracker ~= nil and self.tracker.running
+end
+
+--- Get count of active instances.
+--- @return number
+function Manager:getInstanceCount()
+  return self.instanceCount
+end
+
+--- Start the Manager (internal).
+--- Creates and starts Tracker, starts spaces watcher.
+function Manager:_start()
+  if self.tracker then return end
+
+  print('[wfilter] Manager starting')
+
+  -- Create and start Tracker
+  self.tracker = Tracker.new(self)
+  self.tracker:start()
+
+  -- Start spaces watcher
+  self:_startSpacesWatcher()
+end
+
+--- Stop the Manager (internal).
+--- Stops Tracker and spaces watcher.
+function Manager:_stop()
+  if not self.tracker then return end
+
+  print('[wfilter] Manager stopping')
+
+  -- Stop spaces watcher
+  self:_stopSpacesWatcher()
+
+  -- Stop and clear Tracker
+  self.tracker:stop()
+  self.tracker = nil
+end
+
+--- Start the spaces watcher (internal).
+function Manager:_startSpacesWatcher()
+  if self.spacesWatcher then return end
+
+  self.spacesWatcher = hs.spaces.watcher.new(function()
+    self:_onSpaceChanged()
+  end)
+  self.spacesWatcher:start()
+end
+
+--- Stop the spaces watcher (internal).
+function Manager:_stopSpacesWatcher()
+  if not self.spacesWatcher then return end
+
+  self.spacesWatcher:stop()
+  self.spacesWatcher = nil
+end
+
+--- Handle space change event (internal).
+function Manager:_onSpaceChanged()
+  -- Delay slightly to let the system settle
+  hs.timer.doAfter(Config.SPACE_CHANGE_DELAY, function()
+    self:_handleSpaceChange()
+  end)
+end
+
+--- Process space change after delay (internal).
+function Manager:_handleSpaceChange()
+  if not self.tracker then return end
+
+  print('[wfilter] Space changed, refreshing instances')
+
+  -- Determine which instances to refresh
+  local instancesToRefresh = {}
+
+  -- Always refresh space-aware instances
+  for wf in pairs(self.spacesInstances) do
+    instancesToRefresh[wf] = true
+  end
+
+  -- Also refresh all active instances if forceRefreshOnSpaceChange
+  if windowfilter.forceRefreshOnSpaceChange then
+    for wf in pairs(self.activeInstances) do
+      instancesToRefresh[wf] = true
+    end
+  end
+
+  -- Notify each instance of space change
+  for wf in pairs(instancesToRefresh) do
+    self:_notifyInstance(wf, 'spaceChanged', nil, nil)
+  end
+end
+
+--- Refresh a single instance with current windows (internal).
+--- Called when instance is activated.
+--- @param wf table WindowFilter instance
+function Manager:_refreshInstance(wf)
+  if not self.tracker then return end
+
+  -- Send windowCreated for all currently tracked windows
+  for _, appInfo in pairs(self.tracker.apps) do
+    for _, windowInfo in pairs(appInfo.windows) do
+      self:_notifyInstance(wf, 'windowCreated', windowInfo, appInfo)
+    end
+  end
+end
+
+--- Notify a single instance of an event (internal).
+--- @param wf table WindowFilter instance
+--- @param eventType string Event type name
+--- @param windowInfo table|nil WindowInfo object
+--- @param appInfo table|nil AppInfo object
+function Manager:_notifyInstance(wf, eventType, windowInfo, appInfo)
+  if not wf._handleTrackerEvent then return end
+
+  local ok, err = pcall(wf._handleTrackerEvent, wf, eventType, windowInfo, appInfo)
+  if not ok then
+    print(sformat('[wfilter] Instance event handler error: %s', tostring(err)))
+  end
+end
+
+--- Route an event to all active instances (internal).
+--- @param eventType string Event type name
+--- @param windowInfo table|nil WindowInfo object
+--- @param appInfo table|nil AppInfo object
+function Manager:_routeEvent(eventType, windowInfo, appInfo)
+  for wf in pairs(self.activeInstances) do
+    self:_notifyInstance(wf, eventType, windowInfo, appInfo)
+  end
+end
+
+----------------------------------------------------------------------
+-- Tracker callback interface implementation
+-- These methods are called by Tracker and route to active instances
+----------------------------------------------------------------------
+
+function Manager:onWindowCreated(windowInfo, appInfo)
+  self:_routeEvent('windowCreated', windowInfo, appInfo)
+end
+
+function Manager:onWindowDestroyed(windowInfo, appInfo)
+  self:_routeEvent('windowDestroyed', windowInfo, appInfo)
+end
+
+function Manager:onWindowMoved(windowInfo, appInfo)
+  self:_routeEvent('windowMoved', windowInfo, appInfo)
+end
+
+function Manager:onWindowMinimized(windowInfo, appInfo)
+  self:_routeEvent('windowMinimized', windowInfo, appInfo)
+end
+
+function Manager:onWindowUnminimized(windowInfo, appInfo)
+  self:_routeEvent('windowUnminimized', windowInfo, appInfo)
+end
+
+function Manager:onWindowTitleChanged(windowInfo, appInfo)
+  self:_routeEvent('windowTitleChanged', windowInfo, appInfo)
+end
+
+function Manager:onAppActivated(appInfo)
+  self:_routeEvent('appActivated', nil, appInfo)
+end
+
+function Manager:onAppDeactivated(appInfo)
+  self:_routeEvent('appDeactivated', nil, appInfo)
+end
+
+function Manager:onAppHidden(appInfo)
+  self:_routeEvent('appHidden', nil, appInfo)
+end
+
+function Manager:onAppUnhidden(appInfo)
+  self:_routeEvent('appUnhidden', nil, appInfo)
+end
+
+function Manager:onFocusChanged(windowInfo, appInfo, prevWindowInfo)
+  -- Route focus change with previous window info
+  for wf in pairs(self.activeInstances) do
+    if wf._handleFocusChanged then
+      local ok, err = pcall(wf._handleFocusChanged, wf, windowInfo, appInfo, prevWindowInfo)
+      if not ok then
+        print(sformat('[wfilter] Instance focus handler error: %s', tostring(err)))
+      end
+    else
+      -- Fall back to generic event
+      self:_notifyInstance(wf, 'focusChanged', windowInfo, appInfo)
+    end
+  end
+end
+
+--- String representation for debugging.
+function Manager:__tostring()
+  return sformat('Manager: %d instances, running=%s',
+    self.instanceCount, tostring(self:isRunning()))
+end
+
+-- Expose for testing
+windowfilter._Manager = Manager
+
+--- Module variable to control space change behavior.
+--- If true, all active instances refresh on space change.
+--- If false (default), only space-aware instances refresh.
+windowfilter.forceRefreshOnSpaceChange = false
+
+----------------------------------------------------------------------
+-- SECTION 11: PLACEHOLDER FOR FUTURE COMPONENTS
 ----------------------------------------------------------------------
 -- Components will be added in subsequent steps:
--- Step 7: Manager
 -- Step 8: WindowFilter class (public API)
 -- Step 9: Default filters, module functions
 

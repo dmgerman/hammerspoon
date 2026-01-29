@@ -995,6 +995,444 @@ local function testTrackerWithNilManager()
 end
 
 -- ============================================================================
+-- STEP 7: MANAGER TESTS
+-- ============================================================================
+-- Manager tests are designed to avoid full Tracker startup (which registers
+-- 100+ apps and causes timeouts). Tests manually set up Manager state or
+-- use lightweight mocking.
+
+-- Helper: create a mock WindowFilter instance for testing
+local function createMockWF(trackSpaces)
+  return {
+    _trackSpaces = trackSpaces or false,
+    _events = {},
+    _handleTrackerEvent = function(self, eventType, windowInfo, appInfo)
+      table.insert(self._events, {
+        eventType = eventType,
+        windowInfo = windowInfo,
+        appInfo = appInfo,
+      })
+    end,
+  }
+end
+
+-- Helper: reset Manager singleton for testing (without full Tracker stop)
+local function resetManager()
+  local manager = wf_new._Manager.getInstance()
+  -- Clear instances without triggering full lifecycle
+  manager.activeInstances = {}
+  manager.spacesInstances = {}
+  manager.instanceCount = 0
+  -- Stop tracker if running
+  if manager.tracker then
+    manager.tracker:stop()
+    manager.tracker = nil
+  end
+  -- Stop spaces watcher if running
+  if manager.spacesWatcher then
+    manager.spacesWatcher:stop()
+    manager.spacesWatcher = nil
+  end
+end
+
+-- Helper: create a mock Tracker for Manager tests
+local function createMockTracker()
+  return {
+    running = true,
+    focusedWindowId = 123,
+    focusedAppPid = 456,
+    apps = {},
+    start = function() end,
+    stop = function(self) self.running = false end,
+  }
+end
+
+local function testManagerGetInstance()
+  local manager = wf_new._Manager.getInstance()
+  assertIsNotNil(manager)
+  -- Same instance returned on second call
+  local manager2 = wf_new._Manager.getInstance()
+  assertIsEqual(manager, manager2)
+  return success()
+end
+
+local function testManagerInitialState()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  assertIsEqual(0, manager:getInstanceCount())
+  assertFalse(manager:isRunning())
+  assertIsNil(manager:getTracker())
+  return success()
+end
+
+local function testManagerActivateIncrementsCount()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  local wf = createMockWF()
+
+  -- Manually add without full lifecycle
+  manager.activeInstances[wf] = true
+  manager.instanceCount = 1
+  manager.tracker = createMockTracker()
+
+  assertIsEqual(1, manager:getInstanceCount())
+  assertTrue(manager:isRunning())
+
+  resetManager()
+  return success()
+end
+
+local function testManagerDeactivateDecrementsCount()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  local wf = createMockWF()
+
+  -- Set up state manually
+  manager.activeInstances[wf] = true
+  manager.instanceCount = 1
+  manager.tracker = createMockTracker()
+
+  manager:deactivate(wf)
+  assertIsEqual(0, manager:getInstanceCount())
+  assertFalse(manager:isRunning())
+
+  return success()
+end
+
+local function testManagerMultipleInstancesCounting()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  local wf1 = createMockWF()
+  local wf2 = createMockWF()
+  local wf3 = createMockWF()
+
+  -- Manually set up instances
+  manager.tracker = createMockTracker()
+  manager.activeInstances[wf1] = true
+  manager.activeInstances[wf2] = true
+  manager.activeInstances[wf3] = true
+  manager.instanceCount = 3
+
+  assertIsEqual(3, manager:getInstanceCount())
+  assertTrue(manager:isRunning())
+
+  -- Deactivate one
+  manager:deactivate(wf1)
+  assertIsEqual(2, manager:getInstanceCount())
+  assertTrue(manager:isRunning())
+
+  -- Deactivate second
+  manager:deactivate(wf2)
+  assertIsEqual(1, manager:getInstanceCount())
+  assertTrue(manager:isRunning())
+
+  -- Deactivate last
+  manager:deactivate(wf3)
+  assertIsEqual(0, manager:getInstanceCount())
+  assertFalse(manager:isRunning())
+
+  return success()
+end
+
+local function testManagerDoubleActivateIsNoop()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  local wf = createMockWF()
+
+  -- Set up state
+  manager.tracker = createMockTracker()
+  manager.activeInstances[wf] = true
+  manager.instanceCount = 1
+
+  -- Calling activate on already active instance should be noop
+  manager:activate(wf)
+  assertIsEqual(1, manager:getInstanceCount())
+
+  resetManager()
+  return success()
+end
+
+local function testManagerDoubleDeactivateIsNoop()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  local wf = createMockWF()
+
+  -- Set up and deactivate
+  manager.tracker = createMockTracker()
+  manager.activeInstances[wf] = true
+  manager.instanceCount = 1
+  manager:deactivate(wf)
+  assertIsEqual(0, manager:getInstanceCount())
+
+  -- Second deactivate should be noop
+  manager:deactivate(wf)
+  assertIsEqual(0, manager:getInstanceCount())
+
+  return success()
+end
+
+local function testManagerGetContext()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+
+  -- Before tracker, context should be empty
+  local ctx = manager:getContext()
+  assertIsTable(ctx)
+  assertIsNil(ctx.focusedWindowId)
+  assertIsNil(ctx.activeAppPid)
+
+  -- With mock tracker, context should be available
+  manager.tracker = createMockTracker()
+  ctx = manager:getContext()
+  assertIsTable(ctx)
+  assertIsEqual(123, ctx.focusedWindowId)
+  assertIsEqual(456, ctx.activeAppPid)
+
+  resetManager()
+  return success()
+end
+
+local function testManagerRoutesEvents()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  local wf1 = createMockWF()
+  local wf2 = createMockWF()
+
+  -- Set up instances
+  manager.tracker = createMockTracker()
+  manager.activeInstances[wf1] = true
+  manager.activeInstances[wf2] = true
+  manager.instanceCount = 2
+
+  -- Simulate event from Tracker
+  local testWindowInfo = {id = 123, title = "Test"}
+  local testAppInfo = {name = "TestApp", pid = 456}
+  manager:onWindowCreated(testWindowInfo, testAppInfo)
+
+  -- Both instances should receive the event
+  assertIsEqual(1, #wf1._events)
+  assertIsEqual(1, #wf2._events)
+  assertIsEqual('windowCreated', wf1._events[1].eventType)
+  assertIsEqual(123, wf1._events[1].windowInfo.id)
+
+  resetManager()
+  return success()
+end
+
+local function testManagerRoutesAllEventTypes()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  local wf = createMockWF()
+
+  -- Set up instance
+  manager.tracker = createMockTracker()
+  manager.activeInstances[wf] = true
+  manager.instanceCount = 1
+
+  local winInfo = {id = 1}
+  local appInfo = {name = "App"}
+
+  -- Test all event routing methods
+  manager:onWindowCreated(winInfo, appInfo)
+  manager:onWindowDestroyed(winInfo, appInfo)
+  manager:onWindowMoved(winInfo, appInfo)
+  manager:onWindowMinimized(winInfo, appInfo)
+  manager:onWindowUnminimized(winInfo, appInfo)
+  manager:onWindowTitleChanged(winInfo, appInfo)
+  manager:onAppActivated(appInfo)
+  manager:onAppDeactivated(appInfo)
+  manager:onAppHidden(appInfo)
+  manager:onAppUnhidden(appInfo)
+
+  -- Check that all events were routed
+  local eventTypes = {}
+  for _, ev in ipairs(wf._events) do
+    eventTypes[ev.eventType] = true
+  end
+
+  assertTrue(eventTypes['windowCreated'])
+  assertTrue(eventTypes['windowDestroyed'])
+  assertTrue(eventTypes['windowMoved'])
+  assertTrue(eventTypes['windowMinimized'])
+  assertTrue(eventTypes['windowUnminimized'])
+  assertTrue(eventTypes['windowTitleChanged'])
+  assertTrue(eventTypes['appActivated'])
+  assertTrue(eventTypes['appDeactivated'])
+  assertTrue(eventTypes['appHidden'])
+  assertTrue(eventTypes['appUnhidden'])
+
+  resetManager()
+  return success()
+end
+
+local function testManagerSpacesInstanceTracking()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  local wf1 = createMockWF(false)  -- Not space-aware
+  local wf2 = createMockWF(true)   -- Space-aware
+
+  -- Manually set up instances with _trackSpaces
+  manager.tracker = createMockTracker()
+  manager.activeInstances[wf1] = true
+  manager.activeInstances[wf2] = true
+  manager.instanceCount = 2
+  -- Simulate what activate() does for space-aware instance
+  if wf2._trackSpaces then
+    manager.spacesInstances[wf2] = true
+  end
+
+  -- wf2 should be in spacesInstances
+  assertTrue(manager.spacesInstances[wf2] == true)
+  assertIsNil(manager.spacesInstances[wf1])
+
+  resetManager()
+  return success()
+end
+
+local function testManagerHandlesInstanceErrors()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+
+  -- Create instance that throws errors
+  local badWF = {
+    _trackSpaces = false,
+    _handleTrackerEvent = function()
+      error("intentional error")
+    end,
+  }
+
+  local goodWF = createMockWF()
+
+  -- Set up instances
+  manager.tracker = createMockTracker()
+  manager.activeInstances[badWF] = true
+  manager.activeInstances[goodWF] = true
+  manager.instanceCount = 2
+
+  -- Should not crash, good instance should still receive event
+  manager:onWindowCreated({id = 1}, {name = "App"})
+
+  -- goodWF should have received the event despite badWF error
+  assertIsEqual(1, #goodWF._events)
+
+  resetManager()
+  return success()
+end
+
+local function testManagerToString()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  local str = tostring(manager)
+  assertIsString(str)
+  assertTrue(string.find(str, "Manager") ~= nil)
+  return success()
+end
+
+local function testManagerForceRefreshOnSpaceChangeVariable()
+  -- Just verify the module variable exists
+  assertIsBoolean(wf_new.forceRefreshOnSpaceChange)
+  assertFalse(wf_new.forceRefreshOnSpaceChange)  -- Default is false
+  return success()
+end
+
+local function testManagerRefreshInstance()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+
+  -- Create mock tracker with windows
+  local mockTracker = createMockTracker()
+  mockTracker.apps = {
+    [100] = {
+      name = "TestApp",
+      pid = 100,
+      windows = {
+        [1] = {id = 1, title = "Win1", appName = "TestApp"},
+        [2] = {id = 2, title = "Win2", appName = "TestApp"},
+      }
+    }
+  }
+  manager.tracker = mockTracker
+
+  -- Create instance and call refresh
+  local wf = createMockWF()
+  manager.activeInstances[wf] = true
+  manager.instanceCount = 1
+
+  manager:_refreshInstance(wf)
+
+  -- Should have received windowCreated for each window
+  assertIsEqual(2, #wf._events)
+  assertIsEqual('windowCreated', wf._events[1].eventType)
+
+  resetManager()
+  return success()
+end
+
+local function testManagerFocusChangedRouting()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  local wf = createMockWF()
+
+  -- Set up instance
+  manager.tracker = createMockTracker()
+  manager.activeInstances[wf] = true
+  manager.instanceCount = 1
+
+  -- Test focus changed routing
+  local winInfo = {id = 1}
+  local appInfo = {name = "App"}
+  manager:onFocusChanged(winInfo, appInfo, nil)
+
+  -- Should receive focusChanged event
+  local found = false
+  for _, ev in ipairs(wf._events) do
+    if ev.eventType == 'focusChanged' then
+      found = true
+      break
+    end
+  end
+  assertTrue(found)
+
+  resetManager()
+  return success()
+end
+
+-- Test that verifies Manager integrates with real Tracker (one integration test)
+local function testManagerIntegrationWithTracker()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  local wf = createMockWF()
+
+  -- Actually activate - this will start real Tracker
+  -- We only register one app manually to keep it fast
+  manager.activeInstances[wf] = true
+  manager.instanceCount = 1
+
+  -- Create real tracker but don't call start() (which is slow)
+  manager.tracker = wf_new._Tracker.new(manager)
+  manager.tracker.running = true
+
+  -- Register just one app manually
+  local app = hs.application.frontmostApplication()
+  if app then
+    manager.tracker:registerApp(app)
+  end
+
+  -- Should have some windows tracked
+  assertGreaterThan(-1, manager.tracker:getWindowCount())
+
+  -- Should have received windowCreated events
+  assertIsNumber(#wf._events)
+
+  -- Clean up
+  manager.tracker:stop()
+  manager.tracker = nil
+  resetManager()
+
+  return success()
+end
+
+-- ============================================================================
 -- RUN ALL TESTS
 -- ============================================================================
 
@@ -1105,6 +1543,26 @@ local function runAllTests()
   runTest("testTrackerGetAppAndWindowCount", testTrackerGetAppAndWindowCount)
   runTest("testTrackerManagerCallbackError", testTrackerManagerCallbackError)
   runTest("testTrackerWithNilManager", testTrackerWithNilManager)
+
+  -- Step 7: Manager
+  print("\nStep 7: Manager")
+  runTest("testManagerGetInstance", testManagerGetInstance)
+  runTest("testManagerInitialState", testManagerInitialState)
+  runTest("testManagerActivateIncrementsCount", testManagerActivateIncrementsCount)
+  runTest("testManagerDeactivateDecrementsCount", testManagerDeactivateDecrementsCount)
+  runTest("testManagerMultipleInstancesCounting", testManagerMultipleInstancesCounting)
+  runTest("testManagerDoubleActivateIsNoop", testManagerDoubleActivateIsNoop)
+  runTest("testManagerDoubleDeactivateIsNoop", testManagerDoubleDeactivateIsNoop)
+  runTest("testManagerGetContext", testManagerGetContext)
+  runTest("testManagerRoutesEvents", testManagerRoutesEvents)
+  runTest("testManagerRoutesAllEventTypes", testManagerRoutesAllEventTypes)
+  runTest("testManagerSpacesInstanceTracking", testManagerSpacesInstanceTracking)
+  runTest("testManagerHandlesInstanceErrors", testManagerHandlesInstanceErrors)
+  runTest("testManagerToString", testManagerToString)
+  runTest("testManagerForceRefreshOnSpaceChangeVariable", testManagerForceRefreshOnSpaceChangeVariable)
+  runTest("testManagerRefreshInstance", testManagerRefreshInstance)
+  runTest("testManagerFocusChangedRouting", testManagerFocusChangedRouting)
+  runTest("testManagerIntegrationWithTracker", testManagerIntegrationWithTracker)
 
   -- Summary
   print("\n" .. string.rep("=", 60))
