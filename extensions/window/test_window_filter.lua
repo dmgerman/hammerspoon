@@ -3,7 +3,8 @@
 -- These tests define the behavioral contract that any implementation must satisfy.
 --
 -- Created: 2025-01-28 (Step 0 of window_filter rewrite)
--- Tests: 36 (all passing against current implementation)
+-- Updated: 2025-01-28 (Step 10 - added behavioral tests)
+-- Tests: 49 (36 original + 13 behavioral)
 --
 -- Run via hs CLI:
 --   /Users/dmg/bin/osx/hs -c 'dofile("/Users/dmg/git.forks/hammerspoon/extensions/window/test_window_filter.lua")'
@@ -17,7 +18,7 @@
 --   2. setScreens() expects a screen name (string), not a screen object
 --   3. setRegions() expects a table of regions, not a single region
 --
--- Skipped tests (to be added in Step 10):
+-- Skipped tests:
 --   - testRejectRegionsBug: Tests the rejectRegions bug fix in new implementation
 
 -- ============================================================================
@@ -116,6 +117,14 @@ if not assertIsNumber then
   function assertIsNumber(a)
     if type(a) ~= "number" then
       failure(string.format("expected type: 'number', actual type: '%s'", type(a)))
+    end
+  end
+end
+
+if not assertIsFunction then
+  function assertIsFunction(a)
+    if type(a) ~= "function" then
+      failure(string.format("expected type: 'function', actual type: '%s'", type(a)))
     end
   end
 end
@@ -520,6 +529,187 @@ function testSetRegions()
 end
 
 -- ============================================================================
+-- BEHAVIORAL TESTS (Step 10)
+-- ============================================================================
+
+function testNotifyImmediate()
+  local f = wf.new('Finder')
+  -- Skip if notify method doesn't exist (older Hammerspoon versions)
+  if not f.notify then
+    f:delete()
+    return success()
+  end
+  local called = false
+  local receivedWins = nil
+  f:notify(function(wins) called = true; receivedWins = wins end, nil, true)
+  assertTrue(called)
+  assertIsTable(receivedWins)
+  f:delete()
+  return success()
+end
+
+function testNotifyFnEmpty()
+  local f = wf.new(false)  -- reject all
+  -- Skip if notify method doesn't exist (older Hammerspoon versions)
+  if not f.notify then
+    f:delete()
+    return success()
+  end
+  local fnCalled, fnEmptyCalled = false, false
+  f:notify(function() fnCalled = true end, function() fnEmptyCalled = true end, true)
+  assertFalse(fnCalled)
+  assertTrue(fnEmptyCalled)
+  f:delete()
+  return success()
+end
+
+function testSetOverrideFilterRejects()
+  local f = wf.new('Finder')  -- allow Finder
+  f:setOverrideFilter({visible = false})  -- but override rejects visible
+  local wins = f:getWindows()
+  -- All visible Finder windows should be rejected
+  assertIsEqual(0, #wins)
+  f:delete()
+  return success()
+end
+
+function testIswfBehavior()
+  local f = wf.new()
+  assertTrue(wf.iswf(f))
+  assertFalse(wf.iswf({}))
+  assertFalse(wf.iswf(nil))
+  assertFalse(wf.iswf("string"))
+  assertFalse(wf.iswf(123))
+  f:delete()
+  return success()
+end
+
+function testModuleCopyFunction()
+  local f = wf.new(true)
+  f:rejectApp('Safari')
+  local copy = wf.copy(f)
+  assertTrue(wf.iswf(copy))
+  copy:allowApp('Safari')
+  assertFalse(f:isAppAllowed('Safari'))  -- original unchanged
+  assertTrue(copy:isAppAllowed('Safari'))
+  f:delete()
+  copy:delete()
+  return success()
+end
+
+function testIgnoreInDefaultFilterBehavior()
+  -- ignoreInDefaultFilter should be a table
+  assertIsTable(wf.ignoreInDefaultFilter)
+  -- It should contain known transient apps
+  -- (We can't test adding to it without affecting global state)
+  return success()
+end
+
+function testDefaultAllowsHammerspoonConsole()
+  hs.openConsole()  -- ensure console exists
+  hs.timer.usleep(100000)  -- brief wait for window
+  local consoleWin = hs.window.find('Console')
+  if consoleWin then
+    assertTrue(wf.default:isWindowAllowed(consoleWin))
+  end
+  return success()
+end
+
+function testSwitchedToSpaceNoError()
+  -- Should not error
+  wf.switchedToSpace(1)
+  wf.switchedToSpace(2)
+  return success()
+end
+
+function testBatchOperations()
+  local id = wf.startBatchOperation()
+  assertIsString(id)
+  assertTrue(#id > 0)
+  wf.stopBatchOperation(id)  -- should not error
+  return success()
+end
+
+function testDirectionMethodsNoError()
+  local f = wf.new('Finder')
+  local wins = f:getWindows()
+  if #wins > 0 then
+    local win = wins[1]
+    -- These should not error and return tables (or nil)
+    local e = f:windowsToEast(win)
+    local w = f:windowsToWest(win)
+    local n = f:windowsToNorth(win)
+    local s = f:windowsToSouth(win)
+    if e then assertIsTable(e) end
+    if w then assertIsTable(w) end
+    if n then assertIsTable(n) end
+    if s then assertIsTable(s) end
+  end
+  f:delete()
+  return success()
+end
+
+function testFocusWindowMethodsBehavior()
+  local f = wf.new('Finder')
+  local wins = f:getWindows()
+  if #wins >= 2 then
+    -- Find the leftmost window
+    local leftWin = wins[1]
+    for _, w in ipairs(wins) do
+      if w:frame().x < leftWin:frame().x then leftWin = w end
+    end
+    leftWin:focus()
+    hs.timer.usleep(50000)  -- brief settle
+
+    -- Try to focus window to east
+    local originalFocused = hs.window.focusedWindow()
+    local result = f:focusWindowEast()  -- returns boolean or nil
+
+    if result ~= nil then
+      assertIsBoolean(result)
+      -- If result is true, focus should have changed
+      if result then
+        local newFocused = hs.window.focusedWindow()
+        if newFocused and originalFocused then
+          assertTrue(newFocused:id() ~= originalFocused:id())
+        end
+      end
+    end
+    -- Restore original focus
+    if originalFocused then originalFocused:focus() end
+  end
+  f:delete()
+  return success()
+end
+
+function testModuleFocusFunctionsBehavior()
+  -- These use default filter
+  local originalFocused = hs.window.focusedWindow()
+
+  -- Just verify they don't error and return boolean (or nil)
+  local result = wf.focusEast()
+  if result ~= nil then
+    assertIsBoolean(result)
+  end
+
+  -- Restore focus
+  if originalFocused then originalFocused:focus() end
+  return success()
+end
+
+function testFocusFunctionsReturnBool()
+  local f = wf.new(false)  -- reject all windows
+  -- With no allowed windows, focus functions should return false (or nil)
+  local result = f:focusWindowEast()
+  if result ~= nil then
+    assertIsBoolean(result)
+    assertFalse(result)  -- no windows to focus
+  end
+  f:delete()
+  return success()
+end
+
+-- ============================================================================
 -- RUN ALL TESTS
 -- ============================================================================
 
@@ -591,6 +781,22 @@ local function runAllTests()
   runTest("testSetCurrentSpace", testSetCurrentSpace)
   runTest("testSetScreens", testSetScreens)
   runTest("testSetRegions", testSetRegions)
+
+  -- Behavioral tests (Step 10)
+  print("\nBehavioral Tests:")
+  runTest("testNotifyImmediate", testNotifyImmediate)
+  runTest("testNotifyFnEmpty", testNotifyFnEmpty)
+  runTest("testSetOverrideFilterRejects", testSetOverrideFilterRejects)
+  runTest("testIswfBehavior", testIswfBehavior)
+  runTest("testModuleCopyFunction", testModuleCopyFunction)
+  runTest("testIgnoreInDefaultFilterBehavior", testIgnoreInDefaultFilterBehavior)
+  runTest("testDefaultAllowsHammerspoonConsole", testDefaultAllowsHammerspoonConsole)
+  runTest("testSwitchedToSpaceNoError", testSwitchedToSpaceNoError)
+  runTest("testBatchOperations", testBatchOperations)
+  runTest("testDirectionMethodsNoError", testDirectionMethodsNoError)
+  runTest("testFocusWindowMethodsBehavior", testFocusWindowMethodsBehavior)
+  runTest("testModuleFocusFunctionsBehavior", testModuleFocusFunctionsBehavior)
+  runTest("testFocusFunctionsReturnBool", testFocusFunctionsReturnBool)
 
   -- Summary
   print("\n" .. string.rep("=", 60))

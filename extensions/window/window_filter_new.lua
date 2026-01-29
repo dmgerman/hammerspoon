@@ -771,6 +771,11 @@ function PreFilter.shouldTrackApp(hsApp, config)
     end
   end
 
+  -- Blacklist browser helper processes (e.g., "Safari Web Content", "Chrome Web Content")
+  if appName ~= '' and smatch(appName, 'Web Content$') then
+    return false, 'Web Content helper process'
+  end
+
   return true, nil
 end
 
@@ -2274,8 +2279,16 @@ end
 --- @param fn nil|boolean|string|table|function
 function WindowFilter:_parseConstructorArg(fn)
   if fn == nil then
-    -- Default filter: allow all apps except ignoreAlways
+    -- Default filter: allow all apps except ignoreAlways and ignoreInDefaultFilter
     self._filter:setDefaultFilter(true)
+    -- Reject apps in ignoreAlways
+    for appname in pairs(ignoreAlways) do
+      self._filter:setAppFilter(appname, false)
+    end
+    -- Reject apps in ignoreInDefaultFilter
+    for appname in pairs(ignoreInDefaultFilter) do
+      self._filter:setAppFilter(appname, false)
+    end
   elseif fn == true then
     -- Allow all apps including ignored ones
     self._filter:setOverrideFilter(true)
@@ -2283,20 +2296,23 @@ function WindowFilter:_parseConstructorArg(fn)
     -- Reject all apps
     self._filter:setDefaultFilter(false)
   elseif type(fn) == 'string' then
-    -- Single app name
-    self._filter:setDefaultFilter(false)
-    self._filter:setAppFilter(fn, true)
+    -- Single app name: allow at app level, filter at window level
+    self._allowedApps = {[fn] = true}
+    self._filter:setDefaultFilter(true)  -- Allow all at app level
+    -- Actual filtering happens in isWindowAllowed
   elseif type(fn) == 'function' then
     -- Custom filter function
     self._customFilter = fn
   elseif type(fn) == 'table' then
     -- Could be app list or app rules
     if #fn > 0 then
-      -- Array of app names
-      self._filter:setDefaultFilter(false)
+      -- Array of app names: allow at app level, filter at window level
+      self._allowedApps = {}
       for _, appName in ipairs(fn) do
-        self._filter:setAppFilter(appName, true)
+        self._allowedApps[appName] = true
       end
+      self._filter:setDefaultFilter(true)  -- Allow all at app level
+      -- Actual filtering happens in isWindowAllowed
     else
       -- Table of app rules
       for appName, rules in pairs(fn) do
@@ -2420,6 +2436,14 @@ function WindowFilter:isWindowAllowed(hsWindow)
   local hsApp = safeCall(hsWindow.application, hsWindow)
   if hsApp then
     appInfo = AppInfo.new(hsApp)
+  end
+
+  -- Check app list filter (from string/array constructor)
+  if self._allowedApps then
+    local appName = appInfo and appInfo.name
+    if not appName or not self._allowedApps[appName] then
+      return false
+    end
   end
 
   local context = Manager.getInstance():getContext()
@@ -3084,6 +3108,8 @@ local function makeDefault()
     })
     -- Default to visible windows only
     defaultwf:setDefaultFilter({visible = true})
+    -- Keep Manager running for performance (like original implementation)
+    defaultwf:keepActive()
   end
   return defaultwf
 end
@@ -3186,15 +3212,18 @@ end
 ----------------------------------------------------------------------
 
 -- Add direction methods to WindowFilter using loop to avoid repetition
-local window = hs.window
+local windowMT = hs.getObjectMetatable("hs.window")
 for _, dir in ipairs{'East', 'North', 'West', 'South'} do
   -- windowsToEast/North/West/South
   WindowFilter['windowsTo' .. dir] = function(self, win, ...)
-    return window['windowsTo' .. dir](win, self:getWindows(), ...)
+    return windowMT['windowsTo' .. dir](win, self:getWindows(), ...)
   end
   -- focusWindowEast/North/West/South
   WindowFilter['focusWindow' .. dir] = function(self, win, ...)
-    return window['focusWindow' .. dir](win, self:getWindows(), ...)
+    if windowMT['focusWindow' .. dir](win, self:getWindows(), ...) then
+      return true
+    end
+    return false
   end
   -- Module-level focusEast/North/West/South
   windowfilter['focus' .. dir] = function()
