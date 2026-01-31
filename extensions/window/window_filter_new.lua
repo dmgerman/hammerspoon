@@ -3067,6 +3067,11 @@ function WindowFilter:subscribe(event, fn)
     self._active = true
   end
 
+  -- Resume if paused (as documented)
+  if self._paused and self._subscriptions:hasAny() then
+    self:resume()
+  end
+
   return self
 end
 
