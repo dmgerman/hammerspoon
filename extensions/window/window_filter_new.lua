@@ -49,6 +49,8 @@ local floor, min, max = math.floor, math.min, math.max
 
 -- hs.* caching for dofile() compatibility
 local timer = hs.timer
+local logger = hs.logger
+local log = logger.new('wfilter')
 
 ----------------------------------------------------------------------
 -- SECTION 2: MODULE TABLE
@@ -258,7 +260,7 @@ local function safeCall(fn, obj, ...)
   if ok then
     return result
   else
-    print(sformat('[wfilter] safeCall failed: %s', tostring(result)))
+    log.ef('safeCall failed: %s', tostring(result))
     return nil
   end
 end
@@ -1385,7 +1387,7 @@ function Subscriptions:emit(event, window, appName)
     if fns[fn] then
       local ok, err = pcall(fn, window, appName, event)
       if not ok then
-        print(sformat('[wfilter] callback error for %s: %s', event, tostring(err)))
+        log.ef('callback error for %s: %s', event, tostring(err))
       end
       count = count + 1
     end
@@ -1590,7 +1592,7 @@ function Tracker:start()
   -- Start watching for new apps
   self.appWatcher:start()
 
-  print('[wfilter] Tracker started')
+  log.i('Tracker started')
 end
 
 --- Stop tracking and clean up all watchers.
@@ -1635,7 +1637,7 @@ function Tracker:stop()
   self.focusedWindowId = nil
   self.focusedAppPid = nil
 
-  print('[wfilter] Tracker stopped')
+  log.i('Tracker stopped')
 end
 
 --- Get preFilter config from manager or use default.
@@ -1657,7 +1659,7 @@ function Tracker:_notifyManager(method, ...)
 
   local ok, err = pcall(fn, self.manager, ...)
   if not ok then
-    print(sformat('[wfilter] Manager.%s error: %s', method, tostring(err)))
+    log.ef('Manager.%s error: %s', method, tostring(err))
   end
 end
 
@@ -1720,7 +1722,7 @@ function Tracker:registerApp(hsApp, retryCount)
         })
       end)
       if not startOk then
-        print(sformat('[wfilter] Failed to start watcher for %s', appInfo.name))
+        log.wf('Failed to start watcher for %s', appInfo.name)
       end
     end
 
@@ -1827,7 +1829,7 @@ function Tracker:registerWindow(hsWindow, appInfo, retryCount)
       })
     end)
     if not startOk then
-      print(sformat('[wfilter] Failed to start window watcher for %s (%d)', appInfo.name, id))
+      log.wf('Failed to start window watcher for %s (%d)', appInfo.name, id)
     end
   end
 
@@ -2088,7 +2090,7 @@ function Tracker:cleanupZombies()
   for pid, appInfo in pairs(self.apps) do
     local app = hs.application.applicationForPID(pid)
     if not app then
-      print(sformat('[wfilter] Cleaning up zombie app: %s (%d)', appInfo.name, pid))
+      log.wf('Cleaning up zombie app: %s (%d)', appInfo.name, pid)
       self:unregisterApp(pid)
     end
   end
@@ -2237,7 +2239,7 @@ end
 function Manager:_start()
   if self.tracker then return end
 
-  print('[wfilter] Manager starting')
+  log.i('Manager starting')
 
   -- Create and start Tracker
   self.tracker = Tracker.new(self)
@@ -2252,7 +2254,7 @@ end
 function Manager:_stop()
   if not self.tracker then return end
 
-  print('[wfilter] Manager stopping')
+  log.i('Manager stopping')
 
   -- Stop spaces watcher
   self:_stopSpacesWatcher()
@@ -2292,7 +2294,7 @@ end
 function Manager:_handleSpaceChange()
   if not self.tracker then return end
 
-  print('[wfilter] Space changed, refreshing instances')
+  log.i('Space changed, refreshing instances')
 
   -- Determine which instances to refresh
   local instancesToRefresh = {}
@@ -2339,7 +2341,7 @@ function Manager:_notifyInstance(wf, eventType, windowInfo, appInfo)
 
   local ok, err = pcall(wf._handleTrackerEvent, wf, eventType, windowInfo, appInfo)
   if not ok then
-    print(sformat('[wfilter] Instance event handler error: %s', tostring(err)))
+    log.ef('Instance event handler error: %s', tostring(err))
   end
 end
 
@@ -2404,7 +2406,7 @@ function Manager:onFocusChanged(windowInfo, appInfo, prevWindowInfo)
     if wf._handleFocusChanged then
       local ok, err = pcall(wf._handleFocusChanged, wf, windowInfo, appInfo, prevWindowInfo)
       if not ok then
-        print(sformat('[wfilter] Instance focus handler error: %s', tostring(err)))
+        log.ef('Instance focus handler error: %s', tostring(err))
       end
     else
       -- Fall back to generic event
@@ -2488,8 +2490,13 @@ function WindowFilter.new(fn, logname, loglevel)
   self._currentSpaceOnly = false        -- Only windows in current space
   self._allowedScreens = nil            -- Screen filter
   self._allowedRegions = nil            -- Region filter
-  self._logname = logname               -- Log name
-  self._loglevel = loglevel             -- Log level
+
+  -- Instance-level logging: use custom logger if logname provided, else module logger
+  if logname then
+    self._log = logger.new(logname, loglevel or 'warning')
+  else
+    self._log = log  -- Use module-level logger
+  end
 
   -- Parse constructor argument
   self:_parseConstructorArg(fn)
@@ -3604,10 +3611,17 @@ end
 --- hs.window.filter.setLogLevel(lvl)
 --- Function
 --- Sets the log level for the window filter module.
---- @param lvl string|number Log level
+--- @param lvl string|number Log level ('verbose', 'debug', 'info', 'warning', 'error', 'nothing')
 function windowfilter.setLogLevel(lvl)
-  -- Store for future use when proper logging is added
-  windowfilter._logLevel = lvl
+  log.setLogLevel(lvl)
+end
+
+--- hs.window.filter.getLogLevel() -> number
+--- Function
+--- Gets the current log level for the window filter module.
+--- @return number The current log level (0=nothing, 1=error, 2=warning, 3=info, 4=debug, 5=verbose)
+function windowfilter.getLogLevel()
+  return log.getLogLevel()
 end
 
 --- hs.window.filter.switchedToSpace(space)

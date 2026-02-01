@@ -1949,11 +1949,52 @@ local function testModuleCopy()
 end
 
 local function testModuleSetLogLevel()
-  -- Should not error
+  -- Save original level
+  local originalLevel = wf_new.getLogLevel()
+  -- Set to debug (4) and verify
   wf_new.setLogLevel('debug')
-  assertIsEqual('debug', wf_new._logLevel)
-  wf_new.setLogLevel('info')
-  assertIsEqual('info', wf_new._logLevel)
+  assertIsEqual(4, wf_new.getLogLevel())
+  -- Set to warning (2) and verify
+  wf_new.setLogLevel('warning')
+  assertIsEqual(2, wf_new.getLogLevel())
+  -- Restore original
+  wf_new.setLogLevel(originalLevel)
+  return success()
+end
+
+local function testModuleLoggerExists()
+  assertIsFunction(wf_new.setLogLevel)
+  assertIsFunction(wf_new.getLogLevel)
+  return success()
+end
+
+local function testInstanceLoggerWithCustomName()
+  local wf = wf_new.new(nil, 'mytest', 'debug')
+  assertIsNotNil(wf._log)
+  assertIsEqual(4, wf._log.getLogLevel())  -- debug = 4
+  wf:delete()
+  return success()
+end
+
+local function testInstanceLoggerInheritsModuleLogger()
+  local wf = wf_new.new()
+  assertIsNotNil(wf._log)
+  -- Should have a getLogLevel method
+  assertIsFunction(wf._log.getLogLevel)
+  wf:delete()
+  return success()
+end
+
+local function testLoggingDoesNotError()
+  -- Temporarily set to verbose to enable all logging
+  local originalLevel = wf_new.getLogLevel()
+  wf_new.setLogLevel('verbose')
+  -- Create a filter - this should not error even with logging active
+  local wf = wf_new.new()
+  assertIsNotNil(wf)
+  wf:delete()
+  -- Restore original level
+  wf_new.setLogLevel(originalLevel)
   return success()
 end
 
@@ -2184,6 +2225,10 @@ local function runAllTests()
   runTest("testModuleIswf", testModuleIswf)
   runTest("testModuleCopy", testModuleCopy)
   runTest("testModuleSetLogLevel", testModuleSetLogLevel)
+  runTest("testModuleLoggerExists", testModuleLoggerExists)
+  runTest("testInstanceLoggerWithCustomName", testInstanceLoggerWithCustomName)
+  runTest("testInstanceLoggerInheritsModuleLogger", testInstanceLoggerInheritsModuleLogger)
+  runTest("testLoggingDoesNotError", testLoggingDoesNotError)
   runTest("testModuleBatchOperations", testModuleBatchOperations)
   runTest("testModuleCallable", testModuleCallable)
   runTest("testDirectionMethodsExist", testDirectionMethodsExist)
