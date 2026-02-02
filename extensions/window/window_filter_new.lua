@@ -536,6 +536,10 @@ end
 --- @param context table {focusedWindowId, activeAppPid}
 --- @return boolean allowed, string reason
 function Filter.matchesRule(rule, windowInfo, context)
+  -- Handle boolean rules: true = allow all, false/nil = allow all (no restrictions)
+  if type(rule) == 'boolean' then
+    return rule, rule and '' or 'rejected'
+  end
   if not rule then return true, '' end
   context = context or {}
 
@@ -3508,9 +3512,8 @@ end
 --- @param appInfo table|nil AppInfo object
 function WindowFilter:_emitEvent(eventType, windowInfo, appInfo)
   -- Get the hs.window object if available
-  local hsWindow = windowInfo._window
-  local hsApp = appInfo and appInfo._app or nil
-  local appName = appInfo and appInfo.name or nil
+  local hsWindow = windowInfo and windowInfo._window or nil
+  local appName = appInfo and appInfo.name or (windowInfo and windowInfo.appName) or nil
 
   self._subscriptions:emit(eventType, hsWindow, appName, eventType)
 end

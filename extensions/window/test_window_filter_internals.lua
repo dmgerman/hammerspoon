@@ -412,6 +412,25 @@ local function testFilterMatchesRuleAllowRolesStar()
   return success()
 end
 
+-- Test that matchesRule handles boolean rules (from allowApp/rejectApp)
+local function testFilterMatchesRuleBooleanTrue()
+  -- When rule is true (from allowApp), should return true
+  local windowInfo = {title = "Test", role = "AXWindow"}
+  local allowed, reason = wf_new._Filter.matchesRule(true, windowInfo, {})
+  assertTrue(allowed)
+  assertIsEqual('', reason)
+  return success()
+end
+
+local function testFilterMatchesRuleBooleanFalse()
+  -- When rule is false (from rejectApp), should return false
+  local windowInfo = {title = "Test", role = "AXWindow"}
+  local allowed, reason = wf_new._Filter.matchesRule(false, windowInfo, {})
+  assertFalse(allowed)
+  assertIsEqual('rejected', reason)
+  return success()
+end
+
 local function testFilterMatchesRegions()
   local frame = hs.geometry.rect(100, 100, 200, 200)
   local region = hs.geometry.rect(0, 0, 500, 500)
@@ -1781,6 +1800,35 @@ local function testWindowFilterGetFilters()
   return success()
 end
 
+-- Test the wf.new(false):allowApp() pattern (GitHub issue #1)
+-- This pattern sets default to reject all, then allows specific apps with boolean true
+local function testWindowFilterNewFalseAllowApp()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  -- This is the exact pattern from the bug report that was crashing
+  local wf = wf_new.new(false)
+      :allowApp('Safari')
+      :allowApp('Terminal')
+      :allowApp('Finder')
+
+  -- Should not crash and should have the apps allowed
+  assertIsNotNil(wf)
+  assertTrue(wf:isAppAllowed('Safari'))
+  assertTrue(wf:isAppAllowed('Terminal'))
+  assertTrue(wf:isAppAllowed('Finder'))
+  assertFalse(wf:isAppAllowed('SomeOtherApp'))
+
+  -- getWindows should work without crashing
+  local wins = wf:getWindows()
+  assertIsTable(wins)
+
+  wf:delete()
+  resetManager()
+  return success()
+end
+
 -- ============================================================================
 -- Step 8b: getWindows + Sorting + Notify
 -- ============================================================================
@@ -1987,6 +2035,104 @@ local function testWindowFilterTimestampsTracked()
   return success()
 end
 
+-- Test that _emitEvent uses windowInfo.appName as fallback when appInfo is nil
+local function testEmitEventAppNameFallback()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  local receivedAppName = nil
+
+  wf:subscribe(wf_new.windowFocused, function(win, appName, event)
+    receivedAppName = appName
+  end)
+
+  -- Mark window as allowed so event will emit
+  wf._windows[123] = { allowed = true }
+
+  -- Create a mock windowInfo with appName but no appInfo
+  local mockWindowInfo = {
+    id = 123,
+    appName = "TestApp",
+    _window = nil,  -- No actual window
+  }
+
+  -- Call _emitEvent with nil appInfo - should use windowInfo.appName
+  wf:_emitEvent('windowFocused', mockWindowInfo, nil)
+
+  assertIsEqual("TestApp", receivedAppName)
+
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+-- Test that _emitEvent handles nil windowInfo without crashing
+local function testEmitEventNilWindowInfo()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  local callbackCalled = false
+  local receivedWindow = "not_called"
+
+  wf:subscribe(wf_new.windowFocused, function(win, appName, event)
+    callbackCalled = true
+    receivedWindow = win
+  end)
+
+  -- Call _emitEvent with nil windowInfo - should not crash
+  -- Note: This is an edge case, callback receives nil for window
+  wf:_emitEvent('windowFocused', nil, nil)
+
+  assertTrue(callbackCalled)
+  assertIsNil(receivedWindow)
+
+  wf:delete()
+  resetManager()
+  return success()
+end
+
+-- Test that _emitEvent handles windowInfo with nil _window
+local function testEmitEventNilHsWindow()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  local callbackCalled = false
+  local receivedWindow = "not_called"
+  local receivedAppName = nil
+
+  wf:subscribe(wf_new.windowFocused, function(win, appName, event)
+    callbackCalled = true
+    receivedWindow = win
+    receivedAppName = appName
+  end)
+
+  -- Mark window as allowed
+  wf._windows[456] = { allowed = true }
+
+  -- Create windowInfo with nil _window (simulating destroyed window)
+  local mockWindowInfo = {
+    id = 456,
+    appName = "DestroyedApp",
+    _window = nil,
+  }
+
+  wf:_emitEvent('windowFocused', mockWindowInfo, nil)
+
+  assertTrue(callbackCalled)
+  assertIsNil(receivedWindow)  -- Window is nil since _window was nil
+  assertIsEqual("DestroyedApp", receivedAppName)  -- But appName should work
+
+  wf:delete()
+  resetManager()
+  return success()
+end
+
 -- ============================================================================
 -- Step 9: Module Variables and Functions
 -- ============================================================================
@@ -2185,6 +2331,8 @@ local function runAllTests()
   runTest("testFilterMatchesRuleRejectTitles", testFilterMatchesRuleRejectTitles)
   runTest("testFilterMatchesRuleFocused", testFilterMatchesRuleFocused)
   runTest("testFilterMatchesRuleAllowRolesStar", testFilterMatchesRuleAllowRolesStar)
+  runTest("testFilterMatchesRuleBooleanTrue", testFilterMatchesRuleBooleanTrue)
+  runTest("testFilterMatchesRuleBooleanFalse", testFilterMatchesRuleBooleanFalse)
   runTest("testFilterMatchesRegions", testFilterMatchesRegions)
   runTest("testFilterResolveScreens", testFilterResolveScreens)
 
@@ -2288,6 +2436,7 @@ local function runAllTests()
   runTest("testWindowFilterSetScreens", testWindowFilterSetScreens)
   runTest("testWindowFilterSetRegions", testWindowFilterSetRegions)
   runTest("testWindowFilterGetFilters", testWindowFilterGetFilters)
+  runTest("testWindowFilterNewFalseAllowApp", testWindowFilterNewFalseAllowApp)
 
   -- Step 8b: getWindows + Sorting + Notify
   print("\nStep 8b: getWindows + Sorting + Notify")
@@ -2300,6 +2449,9 @@ local function runAllTests()
   runTest("testWindowFilterNotifyWithFnEmpty", testWindowFilterNotifyWithFnEmpty)
   runTest("testWindowFilterNotifyRemove", testWindowFilterNotifyRemove)
   runTest("testWindowFilterTimestampsTracked", testWindowFilterTimestampsTracked)
+  runTest("testEmitEventAppNameFallback", testEmitEventAppNameFallback)
+  runTest("testEmitEventNilWindowInfo", testEmitEventNilWindowInfo)
+  runTest("testEmitEventNilHsWindow", testEmitEventNilHsWindow)
 
   -- Step 9: Module Variables and Functions
   print("\nStep 9: Module Variables and Functions")
