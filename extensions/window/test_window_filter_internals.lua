@@ -1031,6 +1031,88 @@ local function testTrackerWithNilManager()
   return success()
 end
 
+-- Test that focus changes across apps correctly find the previous window
+-- This is the Command-Tab scenario: switching from App1's window to App2's window
+local function testTrackerCrossAppFocusChange()
+  local stub = wf_new._ManagerStub.new()
+  local tracker = wf_new._Tracker.new(stub)
+  tracker.running = true
+
+  -- Manually create two mock apps with windows
+  local pid1, pid2 = 10001, 10002
+  local winId1, winId2 = 90001, 90002
+
+  -- Create mock AppInfo for app 1
+  local appInfo1 = {
+    pid = pid1,
+    name = "MockApp1",
+    windows = {},
+  }
+  -- Create mock WindowInfo for app 1
+  local windowInfo1 = {
+    id = winId1,
+    title = "Window1",
+    appName = "MockApp1",
+    timeFocused = 0,
+  }
+  appInfo1.windows[winId1] = windowInfo1
+
+  -- Create mock AppInfo for app 2
+  local appInfo2 = {
+    pid = pid2,
+    name = "MockApp2",
+    windows = {},
+  }
+  -- Create mock WindowInfo for app 2
+  local windowInfo2 = {
+    id = winId2,
+    title = "Window2",
+    appName = "MockApp2",
+    timeFocused = 0,
+  }
+  appInfo2.windows[winId2] = windowInfo2
+
+  -- Register both apps in the tracker
+  tracker.apps[pid1] = appInfo1
+  tracker.apps[pid2] = appInfo2
+
+  -- Set current focus to window in app 1
+  tracker.focusedWindowId = winId1
+
+  -- Create a mock element that returns winId2 when id() is called
+  local mockElement = {
+    id = function() return winId2 end,
+  }
+
+  -- Simulate focusedWindowChanged event from app 2
+  -- This simulates what happens during Command-Tab: focus moves to app 2's window
+  local uiwatcher = hs.uielement.watcher
+  tracker:_onAppUIEvent(mockElement, uiwatcher.focusedWindowChanged, pid2, "MockApp2")
+
+  -- Verify the manager received onFocusChanged with correct prevWindowInfo
+  local lastEvent = stub:getLastEvent("focusChanged")
+  assertIsNotNil(lastEvent)
+  assertIsEqual("focusChanged", lastEvent.event)
+
+  -- args[1] is the new window (from app 2)
+  assertIsNotNil(lastEvent.args[1])
+  assertIsEqual(winId2, lastEvent.args[1].id)
+
+  -- args[2] is the appInfo (app 2)
+  assertIsNotNil(lastEvent.args[2])
+  assertIsEqual("MockApp2", lastEvent.args[2].name)
+
+  -- args[3] is the PREVIOUS window (from app 1) - this is the key assertion!
+  assertIsNotNil(lastEvent.args[3])
+  assertIsEqual(winId1, lastEvent.args[3].id)
+  assertIsEqual("Window1", lastEvent.args[3].title)
+
+  -- Verify focusedWindowId was updated
+  assertIsEqual(winId2, tracker.focusedWindowId)
+
+  return success()
+end
+
 -- ============================================================================
 -- STEP 7: MANAGER TESTS
 -- ============================================================================
@@ -2162,6 +2244,7 @@ local function runAllTests()
   runTest("testTrackerGetAppAndWindowCount", testTrackerGetAppAndWindowCount)
   runTest("testTrackerManagerCallbackError", testTrackerManagerCallbackError)
   runTest("testTrackerWithNilManager", testTrackerWithNilManager)
+  runTest("testTrackerCrossAppFocusChange", testTrackerCrossAppFocusChange)
 
   -- Step 7: Manager
   print("\nStep 7: Manager")

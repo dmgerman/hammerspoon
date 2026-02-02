@@ -1994,12 +1994,16 @@ function Tracker:_onAppUIEvent(element, event, pid, name)
       if id and id ~= self.focusedWindowId then
         local prevWindowInfo = nil
         if self.focusedWindowId then
-          -- Find previous focused window
-          for _, info in pairs(appInfo.windows) do
-            if info.id == self.focusedWindowId then
-              prevWindowInfo = info
-              break
+          -- Find previous focused window across ALL apps (not just current app)
+          -- This is important for Command-Tab: the previous window may be in a different app
+          for _, app in pairs(self.apps) do
+            for _, info in pairs(app.windows) do
+              if info.id == self.focusedWindowId then
+                prevWindowInfo = info
+                break
+              end
             end
+            if prevWindowInfo then break end
           end
         end
 
