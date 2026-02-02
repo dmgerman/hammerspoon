@@ -1568,6 +1568,7 @@ function Tracker.new(manager)
   self.titleTimers = {}       -- windowId -> timer (debounce)
   self.running = false
   self.focusedWindowId = nil  -- Track for focus change detection
+  self.prevFocusedWindowId = nil  -- Track previous for deactivated handler
   self.focusedAppPid = nil
 
   return self
@@ -1931,10 +1932,47 @@ function Tracker:_onAppEvent(name, event, hsApp)
     if pid then
       local appInfo = self.apps[pid]
       if appInfo then
-        local prevPid = self.focusedAppPid
         self.focusedAppPid = pid
         appInfo:refresh()
         self:_notifyManager('onAppActivated', appInfo)
+
+        -- Handle focus change when app is activated (e.g., Command-Tab, mouse click)
+        -- The uiwatcher.focusedWindowChanged doesn't fire reliably for these cases
+        local focusedWin = safeCall(hsApp.focusedWindow, hsApp)
+        if focusedWin then
+          local newId = safeCall(focusedWin.id, focusedWin)
+          if newId and newId ~= self.focusedWindowId then
+            -- Find previous focused window across all apps
+            local prevWindowInfo = nil
+            if self.focusedWindowId then
+              for _, app in pairs(self.apps) do
+                for _, info in pairs(app.windows) do
+                  if info.id == self.focusedWindowId then
+                    prevWindowInfo = info
+                    break
+                  end
+                end
+                if prevWindowInfo then break end
+              end
+            end
+
+            -- Save previous before updating (for deactivated handler)
+            self.prevFocusedWindowId = self.focusedWindowId
+            self.focusedWindowId = newId
+
+            -- Get or create WindowInfo for the focused window
+            local windowInfo = appInfo.windows[newId]
+            if not windowInfo then
+              self:registerWindow(focusedWin, appInfo)
+              windowInfo = appInfo.windows[newId]
+            end
+
+            if windowInfo then
+              windowInfo.timeFocused = hs.timer.absoluteTime()
+              self:_notifyManager('onFocusChanged', windowInfo, appInfo, prevWindowInfo)
+            end
+          end
+        end
       else
         -- App activated but not registered yet, register it
         self:registerApp(hsApp)
@@ -1945,6 +1983,22 @@ function Tracker:_onAppEvent(name, event, hsApp)
     if pid then
       local appInfo = self.apps[pid]
       if appInfo then
+        -- Emit unfocused for the previously focused window in this app
+        -- This handles Command-Tab, mouse clicks, etc. where the app loses focus
+        -- Check both IDs since event order varies: activated may fire before or after deactivated
+        local prevWindowInfo = nil
+        if self.prevFocusedWindowId then
+          prevWindowInfo = appInfo.windows[self.prevFocusedWindowId]
+          self.prevFocusedWindowId = nil  -- Clear after use
+        end
+        if not prevWindowInfo and self.focusedWindowId then
+          -- Deactivated fired before activated updated focusedWindowId
+          prevWindowInfo = appInfo.windows[self.focusedWindowId]
+        end
+        if prevWindowInfo then
+          self:_notifyManager('onFocusChanged', nil, nil, prevWindowInfo)
+        end
+
         appInfo:refresh()
         self:_notifyManager('onAppDeactivated', appInfo)
       end
