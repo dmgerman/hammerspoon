@@ -395,7 +395,10 @@ function AppInfo.new(hsApp, pid)
   local self = setmetatable({}, AppInfo)
 
   -- Process identification
-  self.pid = pid or safeCall(hsApp.pid, hsApp) or 0
+  local resolvedPid = pid or safeCall(hsApp.pid, hsApp) or 0
+  -- Workaround: AXUIElementGetPid() can return -1 for stale AX elements (HSuicore.m doesn't check the return value)
+  if resolvedPid <= 0 then return nil end
+  self.pid = resolvedPid
 
   -- Application properties
   self.name = safeCall(hsApp.name, hsApp) or ''
@@ -1687,7 +1690,8 @@ function Tracker:registerApp(hsApp, retryCount)
   if not hsApp then return end
 
   local pid = safeCall(hsApp.pid, hsApp)
-  if not pid then return end
+  -- Workaround: AXUIElementGetPid() can return -1 for stale AX elements (HSuicore.m doesn't check the return value)
+  if not pid or pid <= 0 then return end
 
   -- Already registered?
   if self.apps[pid] then return end
@@ -1927,6 +1931,8 @@ function Tracker:_onAppEvent(name, event, hsApp)
   if not name then return end
 
   local pid = hsApp and safeCall(hsApp.pid, hsApp)
+  -- Workaround: AXUIElementGetPid() can return -1 for stale AX elements (HSuicore.m doesn't check the return value)
+  if pid and pid <= 0 then pid = nil end
 
   if event == appwatcher.launched then
     self:registerApp(hsApp)
@@ -2926,7 +2932,7 @@ function WindowFilter:getWindows(sortOrder)
   end
 
   -- If stale windows were found, wake up the zombie cleanup
-  if foundStale and tracker then
+  if foundStale and tracker and tracker.cleanupZombies then
     timer.doAfter(0, function() tracker:cleanupZombies() end)
   end
 
