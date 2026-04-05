@@ -1597,6 +1597,11 @@ function Tracker:start()
   -- Start watching for new apps
   self.appWatcher:start()
 
+  -- Start periodic zombie cleanup
+  local interval = windowfilter._config.timing.zombieCleanupInterval
+  self.zombieTimer = timer.new(interval, function() self:cleanupZombies() end)
+  self.zombieTimer:start()
+
   log.i('Tracker started')
 end
 
@@ -1604,6 +1609,12 @@ end
 function Tracker:stop()
   if not self.running then return end
   self.running = false
+
+  -- Stop zombie cleanup timer
+  if self.zombieTimer then
+    self.zombieTimer:stop()
+    self.zombieTimer = nil
+  end
 
   -- Stop app watcher
   if self.appWatcher then
@@ -2885,6 +2896,7 @@ function WindowFilter:getWindows(sortOrder)
   local windowsWithState = {}
   local manager = Manager.getInstance()
   local tracker = manager:getTracker()
+  local foundStale = false
 
   for windowId, state in pairs(self._windows) do
     if state[STATE_ALLOWED] then
@@ -2907,8 +2919,15 @@ function WindowFilter:getWindows(sortOrder)
           [STATE_TIME_FOCUSED] = state[STATE_TIME_FOCUSED],
           [STATE_TIME_CREATED] = state[STATE_TIME_CREATED],
         }
+      else
+        foundStale = true
       end
     end
+  end
+
+  -- If stale windows were found, wake up the zombie cleanup
+  if foundStale and tracker then
+    timer.doAfter(0, function() tracker:cleanupZombies() end)
   end
 
   -- Sort windows
