@@ -3380,6 +3380,15 @@ function WindowFilter:_computeWindowState(windowInfo, appInfo)
   local state = {}
   local context = Manager.getInstance():getContext()
 
+  -- Check app list filter (from string/array constructor)
+  if self._allowedApps then
+    local appName = windowInfo.appName or (appInfo and appInfo.name) or ''
+    if not self._allowedApps[appName] then
+      state[STATE_ALLOWED] = false
+      return state
+    end
+  end
+
   -- Check if window passes filter
   if self._customFilter then
     -- For custom filters, we need the actual window object
