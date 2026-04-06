@@ -324,6 +324,20 @@ local function testFilterMatchesOverrideFalse()
   return success()
 end
 
+local function testFilterMatchesOverrideRuleRejectsVisible()
+  local rules = wf_new._FilterRules.new()
+  rules.override = {visible = false}  -- only allow invisible windows
+  local visibleWindow = {appName = "TestApp", isVisible = true, role = "AXStandardWindow"}
+  local allowed, reason = wf_new._Filter.matches(rules, visibleWindow, {})
+  assertFalse(allowed)
+  assertTrue(string.find(reason, "override") ~= nil)
+  -- Invisible window should pass
+  local hiddenWindow = {appName = "TestApp", isVisible = false, role = "AXStandardWindow"}
+  local allowed2, _ = wf_new._Filter.matches(rules, hiddenWindow, {})
+  assertTrue(allowed2)
+  return success()
+end
+
 local function testFilterMatchesAppRejected()
   local rules = wf_new._FilterRules.new()
   rules.appRules["TestApp"] = false
@@ -2323,6 +2337,7 @@ local function runAllTests()
   print("\nStep 3: Filter")
   runTest("testFilterMatchesWithNoRules", testFilterMatchesWithNoRules)
   runTest("testFilterMatchesOverrideFalse", testFilterMatchesOverrideFalse)
+  runTest("testFilterMatchesOverrideRuleRejectsVisible", testFilterMatchesOverrideRuleRejectsVisible)
   runTest("testFilterMatchesAppRejected", testFilterMatchesAppRejected)
   runTest("testFilterMatchesDefaultFalse", testFilterMatchesDefaultFalse)
   runTest("testFilterMatchesRuleVisible", testFilterMatchesRuleVisible)
