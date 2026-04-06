@@ -2198,17 +2198,17 @@ end
 
 local function testInstanceLoggerWithCustomName()
   local wf = wf_new.new(nil, 'mytest', 'debug')
-  assertIsNotNil(wf._log)
-  assertIsEqual(4, wf._log.getLogLevel())  -- debug = 4
+  assertIsNotNil(wf.log)
+  assertIsEqual(4, wf.log.getLogLevel())  -- debug = 4
   wf:delete()
   return success()
 end
 
 local function testInstanceLoggerInheritsModuleLogger()
   local wf = wf_new.new()
-  assertIsNotNil(wf._log)
+  assertIsNotNil(wf.log)
   -- Should have a getLogLevel method
-  assertIsFunction(wf._log.getLogLevel)
+  assertIsFunction(wf.log.getLogLevel)
   wf:delete()
   return success()
 end

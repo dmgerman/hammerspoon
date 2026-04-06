@@ -2572,9 +2572,9 @@ function WindowFilter.new(fn, logname, loglevel)
 
   -- Instance-level logging: use custom logger if logname provided, else module logger
   if logname then
-    self._log = logger.new(logname, loglevel or 'warning')
+    self.log = logger.new(logname, loglevel or 'warning')
   else
-    self._log = log  -- Use module-level logger
+    self.log = log  -- Use module-level logger
   end
 
   -- Parse constructor argument
