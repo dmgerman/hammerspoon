@@ -3146,9 +3146,18 @@ function WindowFilter:subscribe(event, fn)
       end
     end
   elseif type(event) == 'table' then
-    -- subscribe({event = fn, ...})
-    for eventName, callback in pairs(event) do
-      self._subscriptions:add(eventName, callback)
+    local k = next(event)
+    if type(k) == 'number' then
+      -- subscribe({event1, event2, ...}, fn) - list of event names with shared callback
+      if not fn then error('missing parameter fn', 2) end
+      for _, eventName in ipairs(event) do
+        self._subscriptions:add(eventName, fn)
+      end
+    else
+      -- subscribe({event = fn, ...}) - map of event name to callback
+      for eventName, callback in pairs(event) do
+        self._subscriptions:add(eventName, callback)
+      end
     end
   else
     -- subscribe(event, fn)
