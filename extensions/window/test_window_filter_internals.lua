@@ -2190,6 +2190,59 @@ local function testWindowsChangedPseudoEvent()
   return success()
 end
 
+-- Test windowFullscreened/windowUnfullscreened events
+local function testFullscreenEvents()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  local events = {}
+
+  wf:subscribe(wf_new.windowFullscreened, function(win, appName, event)
+    events[#events+1] = 'windowFullscreened'
+  end)
+  wf:subscribe(wf_new.windowUnfullscreened, function(win, appName, event)
+    events[#events+1] = 'windowUnfullscreened'
+  end)
+
+  local mockWindow = { id = 100, appName = "App1", _window = nil }
+  local mockApp = { name = "App1", pid = 1, bundleID = "com.test.app1" }
+
+  -- Fullscreen transition on allowed window: false -> true
+  wf:_emitStateChanges(
+    { allowed = true, fullscreen = false },
+    { allowed = true, fullscreen = true },
+    mockWindow, mockApp)
+  assertIsEqual(1, #events)
+  assertIsEqual('windowFullscreened', events[1])
+
+  -- Fullscreen transition on allowed window: true -> false
+  wf:_emitStateChanges(
+    { allowed = true, fullscreen = true },
+    { allowed = true, fullscreen = false },
+    mockWindow, mockApp)
+  assertIsEqual(2, #events)
+  assertIsEqual('windowUnfullscreened', events[2])
+
+  -- No change in fullscreen state: should NOT fire
+  wf:_emitStateChanges(
+    { allowed = true, fullscreen = true },
+    { allowed = true, fullscreen = true },
+    mockWindow, mockApp)
+  assertIsEqual(2, #events)
+
+  -- Fullscreen transition on non-allowed window: should NOT fire
+  wf:_emitStateChanges(
+    { allowed = false, fullscreen = false },
+    { allowed = false, fullscreen = true },
+    mockWindow, mockApp)
+  assertIsEqual(2, #events)
+
+  wf:delete()
+  return success()
+end
+
 -- Test that _emitEvent uses windowInfo.appName as fallback when appInfo is nil
 local function testEmitEventAppNameFallback()
   resetManager()
@@ -2608,6 +2661,7 @@ local function runAllTests()
   runTest("testZOrderBootstrapTimestamps", testZOrderBootstrapTimestamps)
   runTest("testHasWindowPseudoEvents", testHasWindowPseudoEvents)
   runTest("testWindowsChangedPseudoEvent", testWindowsChangedPseudoEvent)
+  runTest("testFullscreenEvents", testFullscreenEvents)
   runTest("testEmitEventAppNameFallback", testEmitEventAppNameFallback)
   runTest("testEmitEventNilWindowInfo", testEmitEventNilWindowInfo)
   runTest("testEmitEventNilHsWindow", testEmitEventNilHsWindow)

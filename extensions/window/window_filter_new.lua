@@ -2562,6 +2562,7 @@ local STATE_VISIBLE = 'visible'
 local STATE_ON_SCREEN = 'onScreen'
 local STATE_IN_SPACE = 'inCurrentSpace'
 local STATE_FOCUSED = 'focused'
+local STATE_FULLSCREEN = 'fullscreen'
 local STATE_TIME_CREATED = 'timeCreated'
 local STATE_TIME_FOCUSED = 'timeFocused'
 
@@ -3451,6 +3452,9 @@ function WindowFilter:_computeWindowState(windowInfo, appInfo)
   -- Check focused
   state[STATE_FOCUSED] = (context.focusedWindowId == windowInfo.id)
 
+  -- Check fullscreen
+  state[STATE_FULLSCREEN] = windowInfo.isFullscreen or false
+
   return state
 end
 
@@ -3520,6 +3524,15 @@ function WindowFilter:_emitStateChanges(oldState, newState, windowInfo, appInfo)
     if not windowInfo.isMinimized and oldState[STATE_ON_SCREEN] == false then
       self:_emitEvent('windowUnminimized', windowInfo, appInfo)
     end
+  end
+
+  -- windowFullscreened / windowUnfullscreened
+  local wasFullscreen = oldState[STATE_FULLSCREEN]
+  local isFullscreen = newState[STATE_FULLSCREEN]
+  if isAllowed and isFullscreen and not wasFullscreen then
+    self:_emitEvent('windowFullscreened', windowInfo, appInfo)
+  elseif isAllowed and not isFullscreen and wasFullscreen then
+    self:_emitEvent('windowUnfullscreened', windowInfo, appInfo)
   end
 
   -- windowsChanged pseudo-event: fires whenever the allowed set changes
