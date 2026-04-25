@@ -2460,44 +2460,24 @@ end
 -- These methods are called by Tracker and route to active instances
 ----------------------------------------------------------------------
 
-function Manager:onWindowCreated(windowInfo, appInfo)
-  self:_routeEvent('windowCreated', windowInfo, appInfo)
+-- Generate simple event routing methods.
+-- Window events pass (windowInfo, appInfo); app events pass (nil, appInfo).
+for _, event in ipairs({
+  'windowCreated', 'windowDestroyed', 'windowMoved',
+  'windowMinimized', 'windowUnminimized', 'windowTitleChanged',
+}) do
+  local method = 'on' .. event:sub(1, 1):upper() .. event:sub(2)
+  Manager[method] = function(self, windowInfo, appInfo)
+    self:_routeEvent(event, windowInfo, appInfo)
+  end
 end
-
-function Manager:onWindowDestroyed(windowInfo, appInfo)
-  self:_routeEvent('windowDestroyed', windowInfo, appInfo)
-end
-
-function Manager:onWindowMoved(windowInfo, appInfo)
-  self:_routeEvent('windowMoved', windowInfo, appInfo)
-end
-
-function Manager:onWindowMinimized(windowInfo, appInfo)
-  self:_routeEvent('windowMinimized', windowInfo, appInfo)
-end
-
-function Manager:onWindowUnminimized(windowInfo, appInfo)
-  self:_routeEvent('windowUnminimized', windowInfo, appInfo)
-end
-
-function Manager:onWindowTitleChanged(windowInfo, appInfo)
-  self:_routeEvent('windowTitleChanged', windowInfo, appInfo)
-end
-
-function Manager:onAppActivated(appInfo)
-  self:_routeEvent('appActivated', nil, appInfo)
-end
-
-function Manager:onAppDeactivated(appInfo)
-  self:_routeEvent('appDeactivated', nil, appInfo)
-end
-
-function Manager:onAppHidden(appInfo)
-  self:_routeEvent('appHidden', nil, appInfo)
-end
-
-function Manager:onAppUnhidden(appInfo)
-  self:_routeEvent('appUnhidden', nil, appInfo)
+for _, event in ipairs({
+  'appActivated', 'appDeactivated', 'appHidden', 'appUnhidden',
+}) do
+  local method = 'on' .. event:sub(1, 1):upper() .. event:sub(2)
+  Manager[method] = function(self, appInfo)
+    self:_routeEvent(event, nil, appInfo)
+  end
 end
 
 function Manager:onFocusChanged(windowInfo, appInfo, prevWindowInfo)
@@ -3496,36 +3476,25 @@ function WindowFilter:_emitStateChanges(oldState, newState, windowInfo, appInfo)
   -- Only emit other state changes if window is/was allowed
   if not isAllowed and not wasAllowed then return end
 
-  -- windowVisible / windowNotVisible
-  local wasVisible = oldState[STATE_VISIBLE]
-  local isVisible = newState[STATE_VISIBLE]
-  if isAllowed and isVisible and not wasVisible then
-    self:_emitEvent('windowVisible', windowInfo, appInfo)
-  elseif wasAllowed and not isVisible and wasVisible then
-    self:_emitEvent('windowNotVisible', windowInfo, appInfo)
+  -- Emit boolean state transition events
+  local stateTransitions = {
+    {STATE_VISIBLE,    'windowVisible',        'windowNotVisible'},
+    {STATE_ON_SCREEN,  'windowOnScreen',        'windowNotOnScreen'},
+    {STATE_IN_SPACE,   'windowInCurrentSpace',  'windowNotInCurrentSpace'},
+    {STATE_FULLSCREEN, 'windowFullscreened',     'windowUnfullscreened'},
+  }
+  for _, t in ipairs(stateTransitions) do
+    local was, is = oldState[t[1]], newState[t[1]]
+    if isAllowed and is and not was then
+      self:_emitEvent(t[2], windowInfo, appInfo)
+    elseif wasAllowed and not is and was then
+      self:_emitEvent(t[3], windowInfo, appInfo)
+    end
   end
 
-  -- windowOnScreen / windowNotOnScreen
-  local wasOnScreen = oldState[STATE_ON_SCREEN]
-  local isOnScreen = newState[STATE_ON_SCREEN]
-  if isAllowed and isOnScreen and not wasOnScreen then
-    self:_emitEvent('windowOnScreen', windowInfo, appInfo)
-  elseif wasAllowed and not isOnScreen and wasOnScreen then
-    self:_emitEvent('windowNotOnScreen', windowInfo, appInfo)
-  end
-
-  -- windowInCurrentSpace / windowNotInCurrentSpace
-  local wasInSpace = oldState[STATE_IN_SPACE]
-  local isInSpace = newState[STATE_IN_SPACE]
-  if isAllowed and isInSpace and not wasInSpace then
-    self:_emitEvent('windowInCurrentSpace', windowInfo, appInfo)
-  elseif wasAllowed and not isInSpace and wasInSpace then
-    self:_emitEvent('windowNotInCurrentSpace', windowInfo, appInfo)
-  end
-
-  -- windowMinimized / windowUnminimized (derived from onScreen)
+  -- windowMinimized / windowUnminimized (derived from onScreen, custom logic)
+  local wasOnScreen, isOnScreen = oldState[STATE_ON_SCREEN], newState[STATE_ON_SCREEN]
   if isAllowed and not isOnScreen and wasOnScreen and not newState[STATE_VISIBLE] == oldState[STATE_VISIBLE] then
-    -- State changed due to minimize, not visibility
     if windowInfo.isMinimized then
       self:_emitEvent('windowMinimized', windowInfo, appInfo)
     end
@@ -3533,15 +3502,6 @@ function WindowFilter:_emitStateChanges(oldState, newState, windowInfo, appInfo)
     if not windowInfo.isMinimized and oldState[STATE_ON_SCREEN] == false then
       self:_emitEvent('windowUnminimized', windowInfo, appInfo)
     end
-  end
-
-  -- windowFullscreened / windowUnfullscreened
-  local wasFullscreen = oldState[STATE_FULLSCREEN]
-  local isFullscreen = newState[STATE_FULLSCREEN]
-  if isAllowed and isFullscreen and not wasFullscreen then
-    self:_emitEvent('windowFullscreened', windowInfo, appInfo)
-  elseif isAllowed and not isFullscreen and wasFullscreen then
-    self:_emitEvent('windowUnfullscreened', windowInfo, appInfo)
   end
 
   -- windowsChanged pseudo-event: fires whenever the allowed set changes
