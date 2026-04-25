@@ -1597,8 +1597,28 @@ function Tracker:start()
     self:registerApp(app)
   end
 
+  -- Bootstrap z-order timestamps for pre-existing windows.
+  -- hs.window._orderedwinids() returns window IDs sorted by z-index (frontmost first).
+  -- We assign synthetic timeFocused/timeCreated values that preserve this ordering,
+  -- matching the original window_filter.lua behavior so that directional functions
+  -- (windowsToWest, windowsToEast, etc.) get correct z-order information.
+  local ids = hs.window._orderedwinids()
+  local time = timer.secondsSinceEpoch()
+  preexistingWindowTimestamps = {}
+  for i, id in ipairs(ids) do
+    preexistingWindowTimestamps[id] = {
+      timeFocused = time - i,
+      timeCreated = time + id - 999999,
+    }
+  end
+
   -- Start watching for new apps
   self.appWatcher:start()
+
+  -- Clear z-order bootstrap data after initial window registration is done.
+  -- All synchronous windowCreated events have already been dispatched above,
+  -- but use a short delay to cover any async retries.
+  hs.timer.doAfter(5, function() preexistingWindowTimestamps = nil end)
 
   -- Start periodic zombie cleanup
   local interval = windowfilter._config.timing.zombieCleanupInterval
@@ -1612,6 +1632,7 @@ end
 function Tracker:stop()
   if not self.running then return end
   self.running = false
+  preexistingWindowTimestamps = nil
 
   -- Stop zombie cleanup timer
   if self.zombieTimer then
@@ -2544,6 +2565,12 @@ local STATE_FOCUSED = 'focused'
 local STATE_TIME_CREATED = 'timeCreated'
 local STATE_TIME_FOCUSED = 'timeFocused'
 
+-- Z-order bootstrap: maps window ID -> {timeFocused, timeCreated} for pre-existing windows.
+-- Populated once in Tracker:start() from hs.window._orderedwinids(), consumed by
+-- WindowFilter:_handleTrackerEvent() when processing initial windowCreated events,
+-- then cleared so ongoing events use real timestamps.
+local preexistingWindowTimestamps = nil
+
 ----------------------------------------------------------------------
 -- Constructor
 ----------------------------------------------------------------------
@@ -3326,7 +3353,14 @@ function WindowFilter:_handleTrackerEvent(eventType, windowInfo, appInfo)
   end
   -- Set timeCreated if window first becomes allowed
   if newState[STATE_ALLOWED] and not newState[STATE_TIME_CREATED] then
-    newState[STATE_TIME_CREATED] = now
+    -- Use z-order bootstrap timestamps for pre-existing windows
+    local zts = preexistingWindowTimestamps and preexistingWindowTimestamps[windowId]
+    if zts then
+      newState[STATE_TIME_CREATED] = zts.timeCreated
+      newState[STATE_TIME_FOCUSED] = zts.timeFocused
+    else
+      newState[STATE_TIME_CREATED] = now
+    end
   end
   -- Update timeFocused on focus events
   if eventType == 'windowFocused' and newState[STATE_ALLOWED] then
@@ -3536,10 +3570,17 @@ function WindowFilter:_refreshAllWindows()
         newState[STATE_TIME_CREATED] = oldState[STATE_TIME_CREATED]
         newState[STATE_TIME_FOCUSED] = oldState[STATE_TIME_FOCUSED]
       elseif newState[STATE_ALLOWED] then
-        newState[STATE_TIME_CREATED] = now
-        -- Set timeFocused if this is the focused window
-        if context.focusedWindowId == windowInfo.id then
-          newState[STATE_TIME_FOCUSED] = now
+        local zts = preexistingWindowTimestamps
+          and preexistingWindowTimestamps[windowInfo.id]
+        if zts then
+          newState[STATE_TIME_CREATED] = zts.timeCreated
+          newState[STATE_TIME_FOCUSED] = zts.timeFocused
+        else
+          newState[STATE_TIME_CREATED] = now
+          -- Set timeFocused if this is the focused window
+          if context.focusedWindowId == windowInfo.id then
+            newState[STATE_TIME_FOCUSED] = now
+          end
         end
       end
 

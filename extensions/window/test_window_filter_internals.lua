@@ -123,7 +123,8 @@ end
 -- LOAD NEW IMPLEMENTATION
 -- ============================================================================
 
-local wf_new = dofile("/Users/dmg/git.forks/hammerspoon/extensions/window/window_filter_new.lua")
+local thisDir = debug.getinfo(1, "S").source:match("@?(.*/)") or "./"
+local wf_new = dofile(thisDir .. "window_filter_new.lua")
 
 -- ============================================================================
 -- STEP 1: UTILITIES TESTS
@@ -2049,6 +2050,56 @@ local function testWindowFilterTimestampsTracked()
   return success()
 end
 
+-- Test that pre-existing windows get z-order-based timestamps from _orderedwinids()
+local function testZOrderBootstrapTimestamps()
+  resetManager()
+  local wf = wf_new.new()
+
+  -- Collect timeFocused values for all tracked windows
+  local timestamps = {}
+  for id, state in pairs(wf._windows) do
+    if state.allowed and state.timeFocused then
+      timestamps[#timestamps+1] = { id = id, tf = state.timeFocused }
+    end
+  end
+
+  -- Need at least 2 windows to verify ordering
+  if #timestamps < 2 then
+    wf:delete()
+    -- Can't verify z-order with fewer than 2 windows; pass vacuously
+    return success()
+  end
+
+  -- All timeFocused values should be distinct (not the same timestamp)
+  table.sort(timestamps, function(a, b) return a.tf > b.tf end)
+  for i = 1, #timestamps - 1 do
+    assertTrue(timestamps[i].tf ~= timestamps[i + 1].tf,
+      "pre-existing windows should have distinct timeFocused values")
+  end
+
+  -- Verify the ordering matches hs.window._orderedwinids() z-order:
+  -- frontmost window (first in _orderedwinids) should have the highest timeFocused
+  local orderedIds = hs.window._orderedwinids()
+  local zOrderMap = {}
+  for i, id in ipairs(orderedIds) do
+    zOrderMap[id] = i  -- 1 = frontmost
+  end
+
+  -- Among tracked windows that appear in _orderedwinids, verify that
+  -- lower z-position (smaller i = more front) means higher timeFocused
+  for i = 1, #timestamps - 1 do
+    local z1 = zOrderMap[timestamps[i].id]
+    local z2 = zOrderMap[timestamps[i + 1].id]
+    if z1 and z2 then
+      assertTrue(z1 < z2,
+        "window with higher timeFocused should be closer to front in z-order")
+    end
+  end
+
+  wf:delete()
+  return success()
+end
+
 -- Test that _emitEvent uses windowInfo.appName as fallback when appInfo is nil
 local function testEmitEventAppNameFallback()
   resetManager()
@@ -2464,6 +2515,7 @@ local function runAllTests()
   runTest("testWindowFilterNotifyWithFnEmpty", testWindowFilterNotifyWithFnEmpty)
   runTest("testWindowFilterNotifyRemove", testWindowFilterNotifyRemove)
   runTest("testWindowFilterTimestampsTracked", testWindowFilterTimestampsTracked)
+  runTest("testZOrderBootstrapTimestamps", testZOrderBootstrapTimestamps)
   runTest("testEmitEventAppNameFallback", testEmitEventAppNameFallback)
   runTest("testEmitEventNilWindowInfo", testEmitEventNilWindowInfo)
   runTest("testEmitEventNilHsWindow", testEmitEventNilHsWindow)
