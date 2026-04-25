@@ -1790,6 +1790,12 @@ local function testWindowFilterSetScreens()
   local wf = wf_new.new()
   wf:setScreens("Main")
   assertIsEqual("Main", wf._allowedScreens)
+  -- Should propagate to override filter
+  assertIsNotNil(wf._filter._rules.override)
+  assertIsEqual("Main", wf._filter._rules.override.allowScreens)
+  -- Setting nil should clear it
+  wf:setScreens(nil)
+  assertIsEqual(nil, wf._filter._rules.override.allowScreens)
   wf:delete()
   return success()
 end
@@ -1799,6 +1805,30 @@ local function testWindowFilterSetRegions()
   local region = {x = 0, y = 0, w = 100, h = 100}
   wf:setRegions({region})
   assertIsTable(wf._allowedRegions)
+  -- Should propagate to override filter
+  assertIsNotNil(wf._filter._rules.override)
+  assertIsTable(wf._filter._rules.override.allowRegions)
+  wf:delete()
+  return success()
+end
+
+local function testSetScreensPreservesOverride()
+  -- setScreens should not clobber existing override fields
+  local wf = wf_new.new()
+  wf:setOverrideFilter({visible = true})
+  wf:setScreens("Main")
+  assertIsEqual(true, wf._filter._rules.override.visible)
+  assertIsEqual("Main", wf._filter._rules.override.allowScreens)
+  wf:delete()
+  return success()
+end
+
+local function testSetScreensWithFalseOverride()
+  -- If override is false (reject all), setScreens should not modify it
+  local wf = wf_new.new()
+  wf:setOverrideFilter(false)
+  wf:setScreens("Main")
+  assertIsEqual(false, wf._filter._rules.override)
   wf:delete()
   return success()
 end
@@ -2644,6 +2674,8 @@ local function runAllTests()
   runTest("testWindowFilterSetCurrentSpace", testWindowFilterSetCurrentSpace)
   runTest("testWindowFilterSetScreens", testWindowFilterSetScreens)
   runTest("testWindowFilterSetRegions", testWindowFilterSetRegions)
+  runTest("testSetScreensPreservesOverride", testSetScreensPreservesOverride)
+  runTest("testSetScreensWithFalseOverride", testSetScreensWithFalseOverride)
   runTest("testWindowFilterGetFilters", testWindowFilterGetFilters)
   runTest("testWindowFilterNewFalseAllowApp", testWindowFilterNewFalseAllowApp)
 

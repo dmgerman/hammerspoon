@@ -3024,10 +3024,20 @@ end
 ---
 --- Notes:
 ---  * This is just a convenience wrapper for setting the `allowScreens` field in the `override` filter
-function WindowFilter:setScreens(screens)
-  self._allowedScreens = screens
+function WindowFilter:_setOverrideField(field, value)
+  local override = self._filter._rules.override
+  if override ~= false then
+    override = override or {}
+    override[field] = value
+    self._filter:setOverrideFilter(override)
+  end
   self:_refreshAllWindows()
   return self
+end
+
+function WindowFilter:setScreens(screens)
+  self._allowedScreens = screens
+  return self:_setOverrideField('allowScreens', screens)
 end
 
 --- hs.window.filter:setRegions(regions) -> hs.window.filter object
@@ -3044,8 +3054,7 @@ end
 ---  * This is just a convenience wrapper for setting the `allowRegions` field in the `override` filter
 function WindowFilter:setRegions(regions)
   self._allowedRegions = regions
-  self:_refreshAllWindows()
-  return self
+  return self:_setOverrideField('allowRegions', regions)
 end
 
 ----------------------------------------------------------------------
