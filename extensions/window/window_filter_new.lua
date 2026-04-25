@@ -2596,6 +2596,7 @@ function WindowFilter.new(fn, logname, loglevel)
   self._currentSpaceOnly = false        -- Only windows in current space
   self._allowedScreens = nil            -- Screen filter
   self._allowedRegions = nil            -- Region filter
+  self._allowedWindowCount = 0          -- Count of currently allowed windows
 
   -- Instance-level logging: use custom logger if logname provided, else module logger
   if logname then
@@ -3462,11 +3463,21 @@ function WindowFilter:_emitStateChanges(oldState, newState, windowInfo, appInfo)
   local wasAllowed = oldState[STATE_ALLOWED]
   local isAllowed = newState[STATE_ALLOWED]
 
-  -- windowAllowed / windowRejected
+  -- windowAllowed / windowRejected and count tracking
   if isAllowed and not wasAllowed then
+    self._allowedWindowCount = self._allowedWindowCount + 1
     self:_emitEvent('windowAllowed', windowInfo, appInfo)
+    -- hasWindow: fires when count goes from 0 to 1
+    if self._allowedWindowCount == 1 then
+      self:_emitEvent('hasWindow', windowInfo, appInfo)
+    end
   elseif not isAllowed and wasAllowed then
+    self._allowedWindowCount = self._allowedWindowCount - 1
     self:_emitEvent('windowRejected', windowInfo, appInfo)
+    -- hasNoWindows: fires when count goes from 1 to 0
+    if self._allowedWindowCount == 0 then
+      self:_emitEvent('hasNoWindows', windowInfo, appInfo)
+    end
   end
 
   -- Only emit other state changes if window is/was allowed
@@ -3511,11 +3522,24 @@ function WindowFilter:_emitStateChanges(oldState, newState, windowInfo, appInfo)
     end
   end
 
-  -- Call notify function if window list changed (allowed status changed)
-  if self._notifyfn and (isAllowed ~= wasAllowed) then
-    -- Get the event type that triggered this
-    local eventType = isAllowed and 'windowAllowed' or 'windowRejected'
-    self._notifyfn(self:getWindows(), eventType)
+  -- windowsChanged pseudo-event: fires whenever the allowed set changes
+  if isAllowed ~= wasAllowed then
+    -- Pass a random allowed window (or nil if none)
+    local anyWindow, anyApp = nil, nil
+    for _, state in pairs(self._windows) do
+      if state[STATE_ALLOWED] then
+        anyWindow = windowInfo
+        anyApp = appInfo
+        break
+      end
+    end
+    self:_emitEvent('windowsChanged', anyWindow or windowInfo, appInfo)
+
+    -- Call notify function if window list changed
+    if self._notifyfn then
+      local eventType = isAllowed and 'windowAllowed' or 'windowRejected'
+      self._notifyfn(self:getWindows(), eventType)
+    end
   end
 end
 

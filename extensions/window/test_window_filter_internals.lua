@@ -2100,6 +2100,96 @@ local function testZOrderBootstrapTimestamps()
   return success()
 end
 
+-- Test hasWindow/hasNoWindows pseudo-events fire correctly
+local function testHasWindowPseudoEvents()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  local events = {}
+
+  wf:subscribe(wf_new.hasWindow, function(win, appName, event)
+    events[#events+1] = 'hasWindow'
+  end)
+  wf:subscribe(wf_new.hasNoWindows, function(win, appName, event)
+    events[#events+1] = 'hasNoWindows'
+  end)
+
+  local mockWindow = { id = 100, appName = "App1", _window = nil }
+  local mockApp = { name = "App1", pid = 1, bundleID = "com.test.app1" }
+
+  -- Simulate first window becoming allowed: should fire hasWindow
+  wf:_emitStateChanges({}, { allowed = true }, mockWindow, mockApp)
+  assertIsEqual(1, #events)
+  assertIsEqual('hasWindow', events[1])
+
+  -- Simulate second window becoming allowed: should NOT fire hasWindow again
+  wf._allowedWindowCount = 2  -- simulate the count being incremented
+  -- (We already incremented in _emitStateChanges, so set to what it would be)
+  local mockWindow2 = { id = 101, appName = "App1", _window = nil }
+  wf:_emitStateChanges({}, { allowed = true }, mockWindow2, mockApp)
+  -- hasWindow should NOT have fired again (count went from 2 to 3)
+  -- Wait, _emitStateChanges increments, so count was 2 before, now 3
+  -- Actually we manually set count to 2, then _emitStateChanges increments to 3
+  -- Let's verify no extra hasWindow
+  assertIsEqual(1, #events)
+
+  -- Simulate one window rejected: count goes from 3 to 2, no hasNoWindows
+  wf:_emitStateChanges({ allowed = true }, {}, mockWindow2, mockApp)
+  assertIsEqual(1, #events)  -- still just the one hasWindow
+
+  -- Simulate another rejection: count goes from 2 to 1, still no hasNoWindows
+  local mockWindow3 = { id = 102, appName = "App1", _window = nil }
+  wf:_emitStateChanges({ allowed = true }, {}, mockWindow3, mockApp)
+  assertIsEqual(1, #events)
+
+  -- Simulate last window rejected: count goes from 1 to 0, fires hasNoWindows
+  wf:_emitStateChanges({ allowed = true }, {}, mockWindow, mockApp)
+  assertIsEqual(2, #events)
+  assertIsEqual('hasNoWindows', events[2])
+
+  -- Simulate window allowed again: fires hasWindow (count 0 -> 1)
+  wf:_emitStateChanges({}, { allowed = true }, mockWindow, mockApp)
+  assertIsEqual(3, #events)
+  assertIsEqual('hasWindow', events[3])
+
+  wf:delete()
+  return success()
+end
+
+-- Test windowsChanged pseudo-event fires on allowed set changes
+local function testWindowsChangedPseudoEvent()
+  resetManager()
+  local manager = wf_new._Manager.getInstance()
+  manager.tracker = createMockTracker()
+
+  local wf = wf_new.new()
+  local changedCount = 0
+
+  wf:subscribe(wf_new.windowsChanged, function(win, appName, event)
+    changedCount = changedCount + 1
+  end)
+
+  local mockWindow = { id = 100, appName = "App1", _window = nil }
+  local mockApp = { name = "App1", pid = 1, bundleID = "com.test.app1" }
+
+  -- Window becomes allowed: windowsChanged should fire
+  wf:_emitStateChanges({}, { allowed = true }, mockWindow, mockApp)
+  assertIsEqual(1, changedCount)
+
+  -- Window becomes rejected: windowsChanged should fire
+  wf:_emitStateChanges({ allowed = true }, {}, mockWindow, mockApp)
+  assertIsEqual(2, changedCount)
+
+  -- No change in allowed status: windowsChanged should NOT fire
+  wf:_emitStateChanges({ allowed = true }, { allowed = true }, mockWindow, mockApp)
+  assertIsEqual(2, changedCount)
+
+  wf:delete()
+  return success()
+end
+
 -- Test that _emitEvent uses windowInfo.appName as fallback when appInfo is nil
 local function testEmitEventAppNameFallback()
   resetManager()
@@ -2516,6 +2606,8 @@ local function runAllTests()
   runTest("testWindowFilterNotifyRemove", testWindowFilterNotifyRemove)
   runTest("testWindowFilterTimestampsTracked", testWindowFilterTimestampsTracked)
   runTest("testZOrderBootstrapTimestamps", testZOrderBootstrapTimestamps)
+  runTest("testHasWindowPseudoEvents", testHasWindowPseudoEvents)
+  runTest("testWindowsChangedPseudoEvent", testWindowsChangedPseudoEvent)
   runTest("testEmitEventAppNameFallback", testEmitEventAppNameFallback)
   runTest("testEmitEventNilWindowInfo", testEmitEventNilWindowInfo)
   runTest("testEmitEventNilHsWindow", testEmitEventNilHsWindow)
