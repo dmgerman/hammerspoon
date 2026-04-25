@@ -3571,7 +3571,7 @@ function WindowFilter:_handleAppEvent(eventType, appInfo)
       if eventType == 'appHidden' then
         self:_emitEvent('windowHidden', {id = windowId}, appInfo)
       elseif eventType == 'appUnhidden' then
-        self:_emitEvent('windowShown', {id = windowId}, appInfo)
+        self:_emitEvent('windowUnhidden', {id = windowId}, appInfo)
       end
     end
   end
