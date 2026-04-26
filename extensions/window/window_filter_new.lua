@@ -3824,16 +3824,37 @@ end
 -- SECTION 14: DIRECTION AND FOCUS METHODS
 ----------------------------------------------------------------------
 
+-- Sort a list of hs.window objects by actual z-order (frontmost first).
+-- windowsInDirection() uses position in the candidate list as a z-order proxy
+-- (position 1 = frontmost). Using timeFocused order doesn't work because
+-- z-order can change without focus events (e.g., Cmd+Tab brings all of an
+-- app's windows to front, but only the focused window's timeFocused updates).
+local function sortByZOrder(windows)
+  local orderedIds = hs.window._orderedwinids()
+  local zIndex = {}
+  for i, id in ipairs(orderedIds) do
+    zIndex[id] = i
+  end
+  local sorted = {}
+  for i, w in ipairs(windows) do sorted[i] = w end
+  tsort(sorted, function(a, b)
+    local aid = a:id() or 0
+    local bid = b:id() or 0
+    return (zIndex[aid] or 99999) < (zIndex[bid] or 99999)
+  end)
+  return sorted
+end
+
 -- Add direction methods to WindowFilter using loop to avoid repetition
 local windowMT = hs.getObjectMetatable("hs.window")
 for _, dir in ipairs{'East', 'North', 'West', 'South'} do
   -- windowsToEast/North/West/South
   WindowFilter['windowsTo' .. dir] = function(self, win, ...)
-    return windowMT['windowsTo' .. dir](win, self:getWindows(), ...)
+    return windowMT['windowsTo' .. dir](win, sortByZOrder(self:getWindows()), ...)
   end
   -- focusWindowEast/North/West/South
   WindowFilter['focusWindow' .. dir] = function(self, win, ...)
-    if windowMT['focusWindow' .. dir](win, self:getWindows(), ...) then
+    if windowMT['focusWindow' .. dir](win, sortByZOrder(self:getWindows()), ...) then
       return true
     end
     return false
