@@ -2187,9 +2187,16 @@ end
 function Tracker:cleanupZombies()
   if not self.running then return end
 
+  -- Snapshot alive pids from NSWorkspace (single call, no per-pid lookup
+  -- that would trigger LuaSkin error logs for dead pids).
+  local alive = {}
+  for _, app in ipairs(hs.application.runningApplications()) do
+    local pid = safeCall(app.pid, app)
+    if pid then alive[pid] = true end
+  end
+
   for pid, appInfo in pairs(self.apps) do
-    local app = hs.application.applicationForPID(pid)
-    if not app then
+    if not alive[pid] then
       log.wf('Cleaning up zombie app: %s (%d)', appInfo.name, pid)
       self:unregisterApp(pid)
     end
